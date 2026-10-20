@@ -2,7 +2,8 @@
 // played in the browser's own elements over it, so they have sound.
 //
 //   const p = new DeckcraftPlayer(container, { base: '/deckcraft/0.1.0/', fonts: [...] })
-// `base` holds worker.js, deckcraft_player.js and deckcraft_player_bg.wasm.
+// `base` holds worker.js, deckcraft_player.js and deckcraft_player_bg.wasm. When a bundler gives
+// them their own (hashed) URLs, pass those instead: { workerUrl, glueUrl, wasmUrl, fonts }.
 //   await p.open(url)
 //   p.advance(p.nextOf(p.position)) // a click
 //   p.jump(pos)                     // a jump, at rest
@@ -11,9 +12,10 @@
 // mediaAction({shape, action, at}) when someone with controls plays or pauses a clip themselves.
 
 export class DeckcraftPlayer {
-  constructor (container, { base, fonts = [], controls = false } = {}) {
+  constructor (container, { base = '', workerUrl, glueUrl, wasmUrl, fonts = [], controls = false } = {}) {
     this.container = container
     this.base = base
+    this.urls = { worker: workerUrl, glue: glueUrl, wasm: wasmUrl }
     this.fonts = fonts
     this.controls = controls
     this.handlers = {}
@@ -46,7 +48,9 @@ export class DeckcraftPlayer {
     const offscreen = this.canvas.transferControlToOffscreen()
     // Workers can't be created from another origin's script: start from a same-origin blob that
     // imports the real worker.
-    const shim = new Blob([`importScripts(${JSON.stringify(new URL(`${this.base}worker.js`, location.href).href)})`], { type: 'text/javascript' })
+    const base = new URL(this.base, location.href).href
+    const url = (given, name) => new URL(given || name, base).href
+    const shim = new Blob([`importScripts(${JSON.stringify(url(this.urls.worker, 'worker.js'))})`], { type: 'text/javascript' })
     const shimUrl = URL.createObjectURL(shim)
     this.worker = new Worker(shimUrl)
     URL.revokeObjectURL(shimUrl)
@@ -56,13 +60,12 @@ export class DeckcraftPlayer {
     })
     this.worker.onmessage = ({ data }) => this.receive(data)
     this.worker.onerror = e => this.crashed(e.message || 'the player stopped')
-    const base = new URL(this.base, location.href).href
     this.worker.postMessage({
       type: 'init',
-      glueUrl: `${base}deckcraft_player.js`,
-      wasmUrl: `${base}deckcraft_player_bg.wasm`,
+      glueUrl: url(this.urls.glue, 'deckcraft_player.js'),
+      wasmUrl: url(this.urls.wasm, 'deckcraft_player_bg.wasm'),
       canvas: offscreen,
-      fonts: this.fonts.map(f => new URL(f, base).href),
+      fonts: this.fonts.map(f => url(f)),
     }, [offscreen])
     this.resizeObserver?.disconnect()
     this.resizeObserver = new ResizeObserver(() => this.resize())

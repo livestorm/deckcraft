@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeckCraft player</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 16px; background: #f4f4f5; color: #18181b }
+  #stage { max-width: 960px; background: #000 }
+  .bar { display: flex; gap: 8px; align-items: center; margin: 12px 0 }
+  #notes { white-space: pre-wrap; max-width: 960px; color: #52525b }
+  #log { font: 12px ui-monospace, monospace; white-space: pre-wrap; max-height: 240px; overflow: auto }
+</style>
+</head>
+<body>
+<div class="bar">
+  <input id="file" type="file" accept=".pptx,.ppsx">
+  <button id="prev">Previous</button>
+  <button id="next">Next</button>
+  <span id="where">–</span>
+</div>
+<div id="stage"></div>
+<p id="notes"></p>
+<pre id="log"></pre>
+<script type="module">
+import { DeckcraftPlayer } from './player.js'
+
+const $ = id => document.getElementById(id)
+const log = (...a) => { $('log').textContent += a.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ') + '\n' }
+const params = new URLSearchParams(location.search)
+const fonts = (await fetch('./fonts.txt').then(r => r.text())).trim().split('\n')
+const player = new DeckcraftPlayer($('stage'), { base: './', fonts, controls: true })
+window.player = player
+window.metrics = { frames: [] }
+
+const show = () => {
+  const p = player.position
+  const k = player.info.slides.findIndex(s => s.index === p[0])
+  $('where').textContent = `slide ${k + 1} of ${player.info.slides.length}, step ${p[1]}`
+  $('notes').textContent = player.info.slides[k]?.notes || ''
+}
+player.on('ready', info => { log('ready', { slides: info.slides.length, warnings: info.warnings }); show() })
+player.on('state', s => { window.metrics.state = s })
+player.on('metrics', m => {
+  if (m.frameMs !== undefined) window.metrics.frames.push(m.frameMs)
+  else { Object.assign(window.metrics, m); log('metrics', m) }
+})
+player.on('error', e => log('error', e))
+player.on('mediaAction', a => log('mediaAction', a))
+
+$('next').onclick = () => { player.advance(player.nextOf(player.position)); show() }
+$('prev').onclick = () => { player.jump(player.prevOf(player.position)); show() }
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight' || e.key === ' ') $('next').click()
+  if (e.key === 'ArrowLeft') $('prev').click()
+})
+$('file').onchange = async () => {
+  const f = $('file').files[0]
+  if (f) await player.open(URL.createObjectURL(f))
+}
+if (params.get('deck')) player.open(params.get('deck')).catch(e => log('error', e.message))
+</script>
+</body>
+</html>

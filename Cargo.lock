@@ -1113,6 +1113,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "deckcraft-player"
+version = "0.8.0"
+dependencies = [
+ "deckcraft-anim",
+ "deckcraft-engine",
+ "deckcraft-fonts",
+ "deckcraft-format",
+ "deckcraft-geom",
+ "deckcraft-model",
+ "deckcraft-pptx",
+ "deckcraft-render",
+ "deckcraft-text",
+ "image",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "deckcraft-player-web"
+version = "0.8.0"
+dependencies = [
+ "deckcraft-player",
+ "js-sys",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
 name = "deckcraft-pptx"
 version = "0.8.0"
 dependencies = [

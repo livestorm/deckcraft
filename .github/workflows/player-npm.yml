@@ -1,0 +1,67 @@
+name: player-npm
+
+# Publishes apps/player-web as @livestorm/deckcraft-player on npmjs when a `player-web-v<version>`
+# tag is pushed; the tag must match apps/player-web/npm/package.json. Run by hand for a dry run.
+# Auth is npm trusted publishing (OIDC): no token. The package's npmjs settings must list this
+# repository and workflow file as its trusted publisher.
+on:
+  push:
+    tags: ["player-web-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: player-npm
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  # Same craft-fonts commit as ci.yml and release.yml.
+  CRAFT_FONTS_REF: 43913056ce82a3fdad0ef69f6b88d1dc922a8104
+  BINARYEN_VERSION: 132.0.0
+  # Trusted publishing needs npm 11.5.1 or later.
+  NPM_VERSION: 11.6.2
+
+jobs:
+  publish:
+    timeout-minutes: 45
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out craft-fonts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: storytold/craft-fonts
+          ref: ${{ env.CRAFT_FONTS_REF }}
+          path: craft-fonts
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Tools
+        run: |
+          # wasm-bindgen-cli must match the wasm-bindgen crate in Cargo.lock exactly.
+          version=$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/version = |"/, ""); print; exit }' Cargo.lock)
+          cargo install wasm-bindgen-cli --version "$version" --locked
+          npm install -g "npm@$NPM_VERSION" "binaryen@$BINARYEN_VERSION"
+      - name: Check the tag matches the package version
+        if: github.event_name == 'push'
+        run: |
+          version=$(node -p "require('./apps/player-web/npm/package.json').version")
+          test "${GITHUB_REF_NAME}" = "player-web-v$version" || {
+            echo "tag ${GITHUB_REF_NAME} does not match package version $version"; exit 1; }
+      - name: Pack
+        env:
+          CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
+        run: sh apps/player-web/pack.sh "$RUNNER_TEMP/player-npm"
+      - name: Publish
+        working-directory: ${{ runner.temp }}/player-npm
+        run: |
+          npm pack --dry-run
+          if [ "${{ github.event_name }}" = "push" ]; then
+            npm publish --provenance --access public
+          else
+            npm publish --provenance --access public --dry-run
+          fi

@@ -1,5 +1,5 @@
-use deckcraft_player::{Player, Pos};
 use deckcraft_player::Frame;
+use deckcraft_player::{Player, Pos};
 use js_sys::{Array, Float32Array, Object, Reflect, Uint8Array, Uint8ClampedArray, Uint32Array};
 use wasm_bindgen::prelude::*;
 

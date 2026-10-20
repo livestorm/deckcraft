@@ -71,8 +71,9 @@ pub const TABLE: &[(&str, Class)] = &[
 ];
 
 /// Upward dev-dependencies allowed for integration tests: the PPTX round-trip tests drive the
-/// engine (build a deck with commands, export, re-import).
-pub const DEV_EXCEPTIONS: &[(&str, &str)] = &[("pptx", "engine")];
+/// engine (build a deck with commands, export, re-import); the player's tests play the engine's
+/// sample deck.
+pub const DEV_EXCEPTIONS: &[(&str, &str)] = &[("pptx", "engine"), ("player", "engine")];
 
 /// Explicit orderings *within* a layer (earlier may be used by later).
 pub const INTRA_LAYER_ORDER: &[&[&str]] = &[];

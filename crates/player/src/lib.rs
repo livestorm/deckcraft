@@ -184,8 +184,19 @@ impl Player {
         let Some(&first) = order.first() else { return Err(OpenError::Empty) };
         let timelines = pres.slides.iter().map(|s| Timeline::new(s, pres.slide_size.width, pres.slide_size.height)).collect();
         let warnings = lost.into_iter().map(|part| format!("slide {part} could not be read and is left out")).collect();
-        let mut player =
-            Player { pres, order, timelines, pos: Pos::default(), width: 0, height: 0, step: None, transition: None, shown: None, warnings, gpu_transitions: false };
+        let mut player = Player {
+            pres,
+            order,
+            timelines,
+            pos: Pos::default(),
+            width: 0,
+            height: 0,
+            step: None,
+            transition: None,
+            shown: None,
+            warnings,
+            gpu_transitions: false,
+        };
         player.resize(1280);
         player.pos = player.entry(first);
         Ok(player)

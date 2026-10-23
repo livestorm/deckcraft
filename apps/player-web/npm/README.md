@@ -40,7 +40,8 @@ downloads just the fonts it uses, before its first slide is drawn:
 - anything else is drawn in Arimo, Tinos or Cousine, chosen from what the file says the font is
   (sans, serif or monospace);
 - text in a script those don't cover gets a face for it: BIZ UDPGothic for Japanese and Chinese,
-  Nanum Gothic for Korean, Noto for Arabic, Hebrew, the Indic scripts, Thai, Khmer and the rest.
+  Nanum Gothic for Korean, Bpmf Huninn for Bopomofo, Noto for Arabic, Hebrew, the Indic scripts,
+  Thai, Khmer and the rest.
   Chinese draws with Japanese glyph shapes: Google's Chinese faces are Noto CJK (Source Han
   renamed), which DeckCraft doesn't use, nor Adobe's Source families, even when a deck names them;
 - at most 64 fonts per deck, 6 downloads at a time.

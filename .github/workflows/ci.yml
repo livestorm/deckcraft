@@ -54,4 +54,4 @@ jobs:
           CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
         run: cargo xtask ci
       - name: Player worker tests
-        run: node --test apps/player-web/js/
+        run: node --test apps/player-web/js/worker.test.js

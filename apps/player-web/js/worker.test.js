@@ -1,4 +1,4 @@
-// The worker's font loading, run with `node --test apps/player-web/js/`.
+// The worker's font loading, run with `node --test apps/player-web/js/worker.test.js`.
 const test = require('node:test')
 const assert = require('node:assert/strict')
 

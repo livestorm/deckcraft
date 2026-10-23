@@ -315,6 +315,17 @@ pub fn para(ctx: &Ctx, shape: &Shape, para: &crate::text::Paragraph) -> ParaProp
 }
 
 /// Concrete font family for a run (theme references resolved).
+/// What the file says about `family`, the run's resolved Latin font: the run's own hint, or the
+/// theme's for a theme reference (`+mj-lt`, `+mn-lt`). `None` when no hint describes `family`.
+pub fn font_hint<'a>(ctx: &'a Ctx, r: &'a RunProps, family: &str) -> Option<&'a crate::text::FontHint> {
+    let theme = match r.font.as_deref().unwrap_or("+mn-lt") {
+        "+mj-lt" => ctx.master.theme.fonts.major.latin_hint.as_ref(),
+        "+mn-lt" => ctx.master.theme.fonts.minor.latin_hint.as_ref(),
+        _ => None,
+    };
+    crate::text::FontHint::for_typeface(r.font_hint.as_ref().or(theme), family)
+}
+
 pub fn font_family(ctx: &Ctx, r: &RunProps) -> String {
     let f = r.font.as_deref().unwrap_or("+mn-lt");
     let name = ctx.master.theme.font(f);

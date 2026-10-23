@@ -207,6 +207,15 @@ mod tests {
     }
 
     #[test]
+    fn last_resort_font_is_compiled_in_once() {
+        // `epaint_default_fonts::UBUNTU_LIGHT` is a `const`: each use site gets its own copy of
+        // the file in the binary (two copies, 360 KB more wasm) unless both read one `static`.
+        let bundled = bundled();
+        let Some(listed) = bundled.last() else { panic!("no bundled faces") };
+        assert!(std::ptr::eq(listed.as_ptr(), fontdb::last_resort_face().data().as_ptr()));
+    }
+
+    #[test]
     fn line_split_follows_the_windows_ascent_and_descent() {
         use skrifa::raw::TableProvider;
         let f = fontdb::last_resort_face();

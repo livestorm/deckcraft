@@ -25,23 +25,48 @@ pub struct UsedFont {
 }
 
 /// The families the slides' text runs and bullets are drawn in, in first-seen order, without
-/// duplicates (case-insensitive).
+/// duplicates (case-insensitive). The master and layout graphics a slide shows (their
+/// non-placeholder shapes, as the renderer draws them) count too.
 pub fn used_fonts(p: &Presentation) -> Vec<UsedFont> {
     let mut out: Vec<UsedFont> = Vec::new();
+    let mut seen_masters: Vec<*const crate::Master> = Vec::new();
+    let mut seen_layouts: Vec<*const crate::Layout> = Vec::new();
     for slide in &p.slides {
         let Some(ctx) = Ctx::for_slide(p, slide) else { continue };
-        crate::walk(&slide.shapes, &mut |s, _| {
+        let (show_layout, show_master) = resolve::show_master_shapes(slide, ctx.layout);
+        if show_master && !seen_masters.contains(&std::ptr::from_ref(ctx.master)) {
+            seen_masters.push(std::ptr::from_ref(ctx.master));
+            let mctx = Ctx::for_master(p, ctx.master);
+            shapes_fonts(&mctx, &ctx.master.shapes, true, &mut out);
+        }
+        if show_layout
+            && let Some(l) = ctx.layout
+            && !seen_layouts.contains(&std::ptr::from_ref(l))
+        {
+            seen_layouts.push(std::ptr::from_ref(l));
+            let lctx = Ctx::for_layout(p, ctx.master, l);
+            shapes_fonts(&lctx, &l.shapes, true, &mut out);
+        }
+        shapes_fonts(&ctx, &slide.shapes, false, &mut out);
+    }
+    out
+}
+
+/// The fonts of `shapes` (and their children); `graphics_only` skips top-level placeholders,
+/// which a master or layout doesn't draw on a slide.
+fn shapes_fonts(ctx: &Ctx, shapes: &[Shape], graphics_only: bool, out: &mut Vec<UsedFont>) {
+    for top in shapes.iter().filter(|s| !graphics_only || s.ph.is_none()) {
+        crate::walk(std::slice::from_ref(top), &mut |s, _| {
             if let Some(body) = &s.text {
-                body_fonts(&ctx, s, body, &mut out);
+                body_fonts(ctx, s, body, out);
             }
             if let ShapeKind::Table(t) = &s.kind {
                 for cell in t.rows.iter().flat_map(|r| &r.cells) {
-                    body_fonts(&ctx, s, &cell.text, &mut out);
+                    body_fonts(ctx, s, &cell.text, out);
                 }
             }
         });
     }
-    out
 }
 
 fn entry<'a>(out: &'a mut Vec<UsedFont>, family: &str) -> Option<&'a mut UsedFont> {
@@ -156,6 +181,35 @@ mod tests {
         let mut r = run("Text", "Foo Serif", false, false);
         r.props.font_hint = Some(FontHint { typeface: "Old Name".into(), panose: None, pitch_family: Some(18) });
         assert_eq!(find(&used_fonts(&deck(vec![r])), "Foo Serif").hint, None);
+    }
+
+    fn text_shape(name: &str, font: &str) -> Shape {
+        let mut body = TextBody::from_text("");
+        body.paragraphs[0].runs = vec![run("Footer text", font, false, false)];
+        Shape { name: name.into(), text: Some(body), ..Default::default() }
+    }
+
+    #[test]
+    fn master_and_layout_graphics_count_when_the_slide_shows_them() {
+        // The renderer draws a master's and a layout's non-placeholder shapes behind the slide.
+        let mut p = deck(vec![run("Body", "Lato", false, false)]);
+        let layout_id = p.slides[0].layout;
+        let m = Arc::make_mut(&mut p.masters[0]);
+        m.shapes.push(text_shape("Master logo text", "Master Graphic Font"));
+        let mut ph = text_shape("Master title", "Master Placeholder Font");
+        ph.ph = Some(Default::default());
+        m.shapes.push(ph);
+        if let Some(l) = m.layouts.iter_mut().find(|l| l.id == layout_id) {
+            l.shapes.push(text_shape("Layout band text", "Layout Graphic Font"));
+        }
+        let names = |p: &Presentation| used_fonts(p).into_iter().map(|u| u.family).collect::<Vec<_>>();
+        let used = names(&p);
+        assert!(used.contains(&"Master Graphic Font".to_string()), "{used:?}");
+        assert!(used.contains(&"Layout Graphic Font".to_string()), "{used:?}");
+        assert!(!used.contains(&"Master Placeholder Font".to_string()), "placeholders draw through the slide: {used:?}");
+        Arc::make_mut(&mut p.slides[0]).show_master_shapes = false;
+        let used = names(&p);
+        assert!(!used.contains(&"Master Graphic Font".to_string()) && !used.contains(&"Layout Graphic Font".to_string()), "{used:?}");
     }
 
     #[test]

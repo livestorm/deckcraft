@@ -129,10 +129,12 @@ pub fn candidates(family: &str, category: Category) -> Vec<String> {
 /// The open family that draws text in `script` when the document's fonts don't, for scripts
 /// Latin fonts don't cover. Han text (Chinese or Japanese) takes BIZ UDPGothic: the Chinese faces
 /// on Google Fonts are Noto CJK, which is excluded, so Chinese draws with Japanese glyph shapes.
+/// Bopomofo takes justfont's Bpmf Huninn.
 pub fn script_family(script: ScriptTag) -> Option<&'static str> {
     Some(match &script {
         b"Jpan" | b"Hira" | b"Kana" | b"Hani" | b"Hans" | b"Hant" => "BIZ UDPGothic",
         b"Hang" | b"Kore" => "Nanum Gothic",
+        b"Bopo" => "Bpmf Huninn",
         b"Arab" => "Noto Naskh Arabic",
         b"Hebr" => "Noto Sans Hebrew",
         b"Syrc" => "Noto Sans Syriac",
@@ -213,10 +215,12 @@ mod tests {
 
     #[test]
     fn every_script_latin_fonts_miss_has_an_allowed_family() {
-        // One character of each script `script_of` knows besides Latin, Greek and Cyrillic.
-        let samples = "ابپ ܐ ހ ߊ א ঌ அ ఆ ಆ അ අ ກ ក ગ ਗ ଗ က አ ა ա ཀ ก अ 한 字";
-        for c in samples.chars().filter(|c| !c.is_whitespace()) {
-            let script = crate::script::script_of(c).unwrap_or_else(|| panic!("{c} has no script"));
+        // Every script `script_of` knows besides Latin, Greek and Cyrillic (Latin fonts cover those).
+        for c in crate::script::range_starts() {
+            let Some(script) = crate::script::script_of(c) else { continue };
+            if matches!(&script, b"Latn" | b"Grek" | b"Cyrl") {
+                continue;
+            }
             let family = script_family(script).unwrap_or_else(|| panic!("{c} ({}) has no family", String::from_utf8_lossy(&script)));
             assert!(!is_excluded_family(family), "{family} is excluded");
         }

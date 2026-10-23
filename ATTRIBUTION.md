@@ -70,7 +70,9 @@ uses from Livestorm's font CDN, a mirror of [Google Fonts](https://fonts.google.
 entropy's `packages/fonts` (families under the SIL Open Font License 1.1, the Apache License 2.0
 or the Ubuntu Font Licence 1.0, per family on Google Fonts). Nothing from it is committed here or
 compiled in. The stand-ins it asks for first are open families: Carlito, Caladea, Arimo, Tinos,
-Cousine and Inter (OFL-1.1 or Apache-2.0).
+Cousine and Inter (OFL-1.1 or Apache-2.0); for scripts Latin fonts miss, BIZ UDPGothic, Nanum
+Gothic and the non-CJK Noto families (OFL-1.1). It never fetches Adobe's Source families or Noto
+CJK (AGENTS.md §1.1).
 
 ## PDF writer colour profiles
 

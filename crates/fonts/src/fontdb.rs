@@ -19,11 +19,15 @@ pub const FALLBACK_FAMILY: &str = "Inter";
 /// `epaint_default_fonts`; licence in ATTRIBUTION.md).
 pub const LAST_RESORT_FAMILY: &str = "Ubuntu";
 
+/// The last-resort face's file. A `static`, so the file is compiled in once: the
+/// `epaint_default_fonts` constant would be copied into the binary at each place it's used.
+static UBUNTU_LIGHT: &[u8] = epaint_default_fonts::UBUNTU_LIGHT;
+
 /// Compiled-in font files: the craft-fonts faces (Latin presentation fonts, then Japanese;
 /// empty without `CRAFT_FONTS_DIR`), then the last-resort face.
 pub fn bundled() -> Vec<&'static [u8]> {
     let mut v: Vec<&'static [u8]> = crate::CRAFT_FONTS.iter().map(|f| f.bytes).collect();
-    v.push(epaint_default_fonts::UBUNTU_LIGHT);
+    v.push(UBUNTU_LIGHT);
     v
 }
 
@@ -642,7 +646,7 @@ pub(crate) fn last_resort_face() -> Arc<FontFace> {
         // The font is compiled in (`include_bytes!`), so parsing it can't depend on input; the
         // `last_resort_face_parses` test proves it on every run.
         #[allow(clippy::expect_used)]
-        let face = make_face(FontBytes::Static(epaint_default_fonts::UBUNTU_LIGHT), 0, LAST_RESORT_FAMILY.into(), "Regular".into(), Vec::new())
+        let face = make_face(FontBytes::Static(UBUNTU_LIGHT), 0, LAST_RESORT_FAMILY.into(), "Regular".into(), Vec::new())
             .expect("the compiled-in last-resort face parses");
         Arc::new(face)
     })

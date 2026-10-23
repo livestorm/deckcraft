@@ -28,10 +28,9 @@ import { DeckcraftPlayer } from './player.js'
 const $ = id => document.getElementById(id)
 const log = (...a) => { $('log').textContent += a.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ') + '\n' }
 const params = new URLSearchParams(location.search)
-// ?fontsBase=<font server> fetches each deck's fonts; without it, every bundled font loads up front.
+// ?fontsBase=<font server> fetches each deck's fonts; without it, text draws in the last-resort face.
 const fontsBase = params.get('fontsBase')
-const fonts = fontsBase ? [] : (await fetch('./fonts.txt').then(r => r.text())).trim().split('\n')
-const player = new DeckcraftPlayer($('stage'), { base: './', fonts, fontsBase, controls: true })
+const player = new DeckcraftPlayer($('stage'), { base: './', fontsBase, controls: true })
 window.player = player
 window.metrics = { frames: [] }
 

@@ -1,6 +1,6 @@
 {
   "name": "@livestorm/deckcraft-player",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DeckCraft player for the browser: renders .pptx decks in a Web Worker (WebAssembly), with the deck's media played in the page",
   "license": "MIT OR Apache-2.0",
   "repository": {
@@ -13,8 +13,6 @@
     "player.js",
     "deckcraft_player.js",
     "deckcraft_player_bg.wasm",
-    "fonts/",
-    "fonts.txt",
     "LICENSE-MIT",
     "LICENSE-APACHE"
   ],
@@ -23,8 +21,6 @@
     "./player.js": "./player.js",
     "./deckcraft_player.js": "./deckcraft_player.js",
     "./deckcraft_player_bg.wasm": "./deckcraft_player_bg.wasm",
-    "./fonts.txt": "./fonts.txt",
-    "./fonts/*": "./fonts/*",
     "./package.json": "./package.json"
   },
   "sideEffects": false,

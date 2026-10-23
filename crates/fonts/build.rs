@@ -2,10 +2,13 @@
 //! `docs/integration.md`). With `CRAFT_FONTS_DIR=<checkout>` the fonts in its
 //! `fonts/latin-manifest.txt` (presentation fonts) and `fonts/manifest.txt` are embedded as
 //! `CRAFT_FONTS`, Latin first; unset, `CRAFT_FONTS` is empty. Web (wasm32) builds embed only Inter
-//! Regular/Bold and BIZ UDPGothic Regular, to stay within the web size budget. It only reads the
-//! local checkout: no network.
+//! Regular/Bold and BIZ UDPGothic Regular, to stay within the web size budget, and with
+//! `CRAFT_FONTS_EMBED=none` (the browser player's build) nothing: see `embed_rules.rs`. It only
+//! reads the local checkout: no network.
 use std::fmt::Write as _;
 use std::path::PathBuf;
+
+include!("embed_rules.rs");
 
 /// Families DeckCraft never embeds (AGENTS.md §1: no Adobe-authored visual design).
 const EXCLUDED_FAMILIES: &[&str] = &["Source Sans 3", "Source Serif 4", "Source Han Sans", "Source Han Serif", "Noto Sans CJK SC"];
@@ -13,6 +16,7 @@ const EXCLUDED_FAMILIES: &[&str] = &["Source Sans 3", "Source Serif 4", "Source 
 fn main() {
     println!("cargo::rerun-if-env-changed=CRAFT_FONTS_DIR");
     println!("cargo::rerun-if-env-changed=CRAFT_FONTS_REQUIRED");
+    println!("cargo::rerun-if-env-changed=CRAFT_FONTS_EMBED");
     let mut src = String::from("pub static CRAFT_FONTS: &[CraftFont] = &[\n");
     if let Some(dir) = std::env::var_os("CRAFT_FONTS_DIR").map(PathBuf::from) {
         match craft_fonts(&dir) {
@@ -47,6 +51,7 @@ fn manifest(dir: &std::path::Path, manifest: &std::path::Path) -> Result<String,
     println!("cargo::rerun-if-changed={}", manifest.display());
     let text = std::fs::read_to_string(manifest).map_err(|e| format!("{}: {e}", manifest.display()))?;
     let wasm = std::env::var("CARGO_CFG_TARGET_ARCH").is_ok_and(|a| a == "wasm32");
+    let embed = std::env::var("CRAFT_FONTS_EMBED").ok();
     let mut out = String::new();
     for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
         let f: Vec<&str> = line.split(" | ").map(str::trim).collect();
@@ -57,7 +62,7 @@ fn manifest(dir: &std::path::Path, manifest: &std::path::Path) -> Result<String,
         if EXCLUDED_FAMILIES.contains(family) {
             continue;
         }
-        if wasm && !matches!((*family, *style), ("BIZ UDPGothic", "Regular") | ("Inter", "Regular" | "Bold" | "Variable")) {
+        if !embeds(family, style, wasm, embed.as_deref()) {
             continue;
         }
         let path = dir.join(file).canonicalize().map_err(|e| format!("{file}: {e}"))?;

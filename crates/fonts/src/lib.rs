@@ -169,8 +169,29 @@ pub fn first_glyph(face: &FontFace, chars: &[char]) -> u32 {
 }
 
 #[cfg(test)]
+#[path = "../embed_rules.rs"]
+mod embed_rules;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_each_build_embeds() {
+        use embed_rules::embeds;
+        // Native builds embed every craft-fonts face (Adobe's families are excluded elsewhere).
+        assert!(embeds("Carlito", "Regular", false, None));
+        assert!(embeds("BIZ UDPGothic", "Bold", false, None));
+        // Web builds (the editor) keep Inter and BIZ UDPGothic Regular to stay small.
+        assert!(embeds("Inter", "Regular", true, None));
+        assert!(embeds("BIZ UDPGothic", "Regular", true, None));
+        assert!(!embeds("Carlito", "Regular", true, None));
+        // CRAFT_FONTS_EMBED=none (the browser player): nothing, it fetches each deck's fonts.
+        assert!(!embeds("Inter", "Regular", true, Some("none")));
+        assert!(!embeds("Carlito", "Regular", false, Some("none")));
+        // Any other value changes nothing.
+        assert!(embeds("Inter", "Regular", true, Some("")));
+    }
 
     fn any_face() -> std::sync::Arc<FontFace> {
         FontDb::global().face(DEFAULT_FAMILY, "Regular")

@@ -123,7 +123,16 @@ const gpu = {
 
 // Fonts on demand: with `fontsBase`, a deck's fonts come from a font server laid out as
 // <fontsBase>families/<key>/family.json plus the faces it lists (entropy's packages/fonts).
-const familyKey = name => name.trim().toLowerCase().replace(/\s+/g, '-')
+// A family's folder: its name lowercased, spaces as hyphens, as one URL segment. The name comes
+// from the deck, so it is encoded: '../x' or '?' can't point a fetch outside the font folders.
+// '' for a name that is only dots or space, which is never fetched.
+const familyKey = name => {
+  const key = name.trim().toLowerCase().replace(/\s+/g, '-')
+  return /^\.*$/.test(key) ? '' : encodeURIComponent(key)
+}
+
+// At most this many font fetches at once, however many fonts a deck asks for.
+const MAX_FETCHES = 6
 
 // The face nearest `weight` in the asked style (the heavier on a tie), else in the other style.
 function pickFace (faces, weight, italic) {
@@ -145,17 +154,26 @@ async function loadFonts (requests, base, fetchFn = fetch) {
     if (!cache.has(key)) cache.set(key, load().catch(() => null))
     return cache.get(key)
   }
-  const get = async url => {
-    const r = await fetchFn(url)
-    if (!r.ok) throw new Error(`${url}: ${r.status}`)
-    return r
+  let running = 0
+  const waiting = []
+  const get = async (url, read) => {
+    if (running >= MAX_FETCHES) await new Promise(resolve => waiting.push(resolve))
+    running++
+    try {
+      const r = await fetchFn(url)
+      if (!r.ok) throw new Error(`${url}: ${r.status}`)
+      return await read(r)
+    } finally {
+      running--
+      waiting.shift()?.()
+    }
   }
   const url = (name, file) => `${root}families/${familyKey(name)}/${file}`
   const one = async req => {
-    for (const name of req.candidates) {
-      const family = await once(url(name, 'family.json'), () => get(url(name, 'family.json')).then(r => r.json()))
+    for (const name of req.candidates.filter(familyKey)) {
+      const family = await once(url(name, 'family.json'), () => get(url(name, 'family.json'), r => r.json()))
       const face = family && pickFace(family.faces || [], req.weight, req.italic)
-      const buf = face && await once(url(name, face.file), () => get(url(name, face.file)).then(r => r.arrayBuffer()))
+      const buf = face && await once(url(name, face.file), () => get(url(name, encodeURIComponent(face.file)), r => r.arrayBuffer()))
       if (buf) return { family: req.family, from: family.family, bytes: new Uint8Array(buf) }
     }
     return null
@@ -263,7 +281,7 @@ async function handle (m) {
 
 if (typeof module === 'object' && module.exports) {
   // Node, for the tests (worker.test.js).
-  module.exports = { familyKey, pickFace, loadFonts }
+  module.exports = { familyKey, pickFace, loadFonts, MAX_FETCHES }
 } else {
   // Messages run one after the other: an `open` sent right after `init` waits for the module,
   // but its download starts now, alongside the module's.

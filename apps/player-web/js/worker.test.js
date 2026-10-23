@@ -2,7 +2,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { familyKey, pickFace, loadFonts } = require('./worker.js')
+const { familyKey, pickFace, loadFonts, MAX_FETCHES } = require('./worker.js')
 
 const BASE = 'https://fonts.example/'
 
@@ -81,4 +81,28 @@ test('a failed file moves on to the next candidate, and nothing found is left ou
 test('a fetch that throws is a miss, not a crash', async () => {
   const got = await loadFonts([{ family: 'Calibri', weight: 400, italic: false, candidates: ['Carlito'] }], BASE, async () => { throw new Error('offline') })
   assert.deepEqual(got, [])
+})
+
+test('a family name is one URL segment, so a deck cannot point fetches elsewhere', async () => {
+  assert.equal(familyKey('../../api/private?x='), '..%2F..%2Fapi%2Fprivate%3Fx%3D')
+  assert.equal(familyKey('M+ 1p'), 'm%2B-1p')
+  const { fetch, asked } = server({})
+  await loadFonts([{ family: 'x', weight: 400, italic: false, candidates: ['../../api/private?x=', '..', '.', ' '] }], BASE, fetch)
+  assert.deepEqual(asked, [`${BASE}families/..%2F..%2Fapi%2Fprivate%3Fx%3D/family.json`])
+})
+
+test('at most a few fetches run at once', async () => {
+  let inFlight = 0
+  let most = 0
+  const fetch = async () => {
+    inFlight++
+    most = Math.max(most, inFlight)
+    await new Promise(resolve => setTimeout(resolve, 5))
+    inFlight--
+    return { ok: false, status: 403 }
+  }
+  const requests = Array.from({ length: 40 }, (_, i) => ({ family: `F${i}`, weight: 400, italic: false, candidates: [`F${i}`, `G${i}`] }))
+  await loadFonts(requests, BASE, fetch)
+  assert.ok(most <= MAX_FETCHES, `${most} fetches at once`)
+  assert.ok(most > 1, 'still in parallel')
 })

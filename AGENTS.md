@@ -72,6 +72,11 @@ allowed: our UI, our/Lucide icons, OFL fonts, and decks built only from allowed 
   repo (craftrules `standards/fonts.md`). DeckCraft embeds its `fonts/latin-manifest.txt` and
   `fonts/manifest.txt` when built with `CRAFT_FONTS_DIR` (local dev: `.cargo/config.toml` points at
   `../craft-fonts`).
+- **Exception, the browser player** (`apps/player-web`; decided by Lachlan Laycock, 2026-10-23):
+  it compiles in no craft-fonts faces (`CRAFT_FONTS_EMBED=none`) and fetches each deck's fonts at
+  runtime from Livestorm's Google Fonts mirror (entropy's `packages/fonts`). Google Fonts are
+  openly licensed (OFL, Apache, Ubuntu Font Licence), which §1.2 allows; nothing from the mirror
+  is committed or bundled. `ATTRIBUTION.md` says so.
 
 ### 1.4 Adding or changing an asset
 

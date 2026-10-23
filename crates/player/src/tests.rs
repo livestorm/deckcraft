@@ -158,3 +158,77 @@ fn gpu_transitions_hand_out_layers_and_their_pictures_once() {
     let second = p.frame(1.02).transition.expect("still in the transition");
     assert!(second.textures.is_none(), "pictures are handed out once");
 }
+
+mod font_requests {
+    use std::collections::BTreeSet;
+
+    use deckcraft_model::fonts::UsedFont;
+    use deckcraft_model::text::FontHint;
+
+    use super::*;
+
+    fn used(family: &str, styles: &[(bool, bool)], chars: &str, hint: Option<FontHint>) -> UsedFont {
+        UsedFont { family: family.into(), hint, styles: styles.iter().copied().collect::<BTreeSet<_>>(), chars: chars.into() }
+    }
+
+    fn none_loaded(_: &str) -> bool {
+        false
+    }
+
+    fn req(family: &str, weight: u16, italic: bool, candidates: &[&str]) -> FontRequest {
+        FontRequest { family: family.into(), weight, italic, candidates: candidates.iter().map(|c| c.to_string()).collect() }
+    }
+
+    #[test]
+    fn each_style_of_a_missing_family_asks_for_its_stand_ins() {
+        let r = requests_for(&[used("Calibri", &[(false, false), (true, true)], "Hi", None)], none_loaded);
+        assert_eq!(r.len(), 2);
+        assert_eq!((r[0].weight, r[0].italic), (400, false));
+        assert_eq!((r[1].weight, r[1].italic), (700, true));
+        assert_eq!(r[0].candidates[..2], ["Calibri", "Carlito"]);
+        assert_eq!(r[0].family, "Calibri");
+    }
+
+    #[test]
+    fn a_weight_in_the_name_wins() {
+        let r = requests_for(&[used("Montserrat Light", &[(false, false), (true, false)], "Hi", None)], none_loaded);
+        assert_eq!(r, vec![req("Montserrat Light", 300, false, &["Montserrat Light", "Montserrat", "Inter", "Arimo"])]);
+    }
+
+    #[test]
+    fn the_hint_picks_the_generic_face() {
+        let hint = FontHint { typeface: "Old Foundry Serif".into(), panose: None, pitch_family: Some(0x12) };
+        let r = requests_for(&[used("Old Foundry Serif", &[(false, false)], "Hi", Some(hint))], none_loaded);
+        assert_eq!(r, vec![req("Old Foundry Serif", 400, false, &["Old Foundry Serif", "Tinos"])]);
+    }
+
+    #[test]
+    fn loaded_and_symbol_fonts_ask_for_nothing() {
+        let r = requests_for(&[used("Brand Sans", &[(false, false)], "Hi", None), used("Wingdings", &[(false, false)], "\u{f0a7}", None)], |f| {
+            f == "Brand Sans"
+        });
+        assert!(r.is_empty(), "{r:?}");
+    }
+
+    #[test]
+    fn scripts_latin_fonts_miss_ask_for_their_family_once() {
+        let only = |family: &'static str| move |f: &str| f != family;
+        // Kanji with kana is Japanese; kanji alone is taken as Chinese.
+        let r =
+            requests_for(&[used("Calibri", &[(false, false)], "日本の", None), used("Arial", &[(false, false)], "語", None)], only("BIZ UDPGothic"));
+        assert_eq!(r, vec![req("", 400, false, &["BIZ UDPGothic"])]);
+        let r = requests_for(&[used("Calibri", &[(false, false)], "中文", None)], only("Noto Sans SC"));
+        assert_eq!(r, vec![req("", 400, false, &["Noto Sans SC"])]);
+    }
+
+    #[test]
+    fn the_sample_deck_asks_only_for_fonts_it_uses_and_lacks() {
+        let p = sample();
+        let used: Vec<String> = deckcraft_model::fonts::used_fonts(&p.pres).into_iter().map(|u| u.family).collect();
+        for r in p.font_requests() {
+            assert!(r.family.is_empty() || used.contains(&r.family), "{r:?} not in {used:?}");
+            assert!(r.family.is_empty() || !FontDb::global().has_family(&r.family), "{r:?} is loaded");
+            assert!(!r.candidates.is_empty());
+        }
+    }
+}

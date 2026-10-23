@@ -27,6 +27,31 @@ impl WebPlayer {
         Player::add_font(bytes)
     }
 
+    /// Add a font under the family name a deck uses (a font request's `family`). Returns the
+    /// faces added.
+    #[wasm_bindgen(js_name = addFontAs)]
+    pub fn add_font_as(bytes: Vec<u8>, family: &str) -> usize {
+        Player::add_font_as(bytes, family)
+    }
+
+    /// The fonts this deck needs and doesn't have: `[{family, weight, italic, candidates}]`.
+    /// Fetch the first candidate the font server has, in the face closest to `weight`/`italic`,
+    /// and add it with `addFontAs(bytes, family)`, or `addFont(bytes)` when `family` is empty.
+    #[wasm_bindgen(js_name = fontRequests)]
+    pub fn font_requests(&self) -> Result<JsValue, JsValue> {
+        let out = Array::new();
+        for r in self.inner.font_requests() {
+            let o = Object::new();
+            set(&o, "family", r.family.as_str())?;
+            set(&o, "weight", f64::from(r.weight))?;
+            set(&o, "italic", r.italic)?;
+            let candidates: Array = r.candidates.iter().map(|c| JsValue::from_str(c)).collect();
+            set(&o, "candidates", candidates)?;
+            out.push(&o);
+        }
+        Ok(out.into())
+    }
+
     /// `{aspect, warnings, slides: [{index, title, notes, steps, autoFirst}]}`
     pub fn info(&self) -> Result<JsValue, JsValue> {
         let slides = Array::new();

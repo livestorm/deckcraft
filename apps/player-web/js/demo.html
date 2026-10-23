@@ -28,8 +28,10 @@ import { DeckcraftPlayer } from './player.js'
 const $ = id => document.getElementById(id)
 const log = (...a) => { $('log').textContent += a.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ') + '\n' }
 const params = new URLSearchParams(location.search)
-const fonts = (await fetch('./fonts.txt').then(r => r.text())).trim().split('\n')
-const player = new DeckcraftPlayer($('stage'), { base: './', fonts, controls: true })
+// ?fontsBase=<font server> fetches each deck's fonts; without it, every bundled font loads up front.
+const fontsBase = params.get('fontsBase')
+const fonts = fontsBase ? [] : (await fetch('./fonts.txt').then(r => r.text())).trim().split('\n')
+const player = new DeckcraftPlayer($('stage'), { base: './', fonts, fontsBase, controls: true })
 window.player = player
 window.metrics = { frames: [] }
 
@@ -46,6 +48,7 @@ player.on('metrics', m => {
   else { Object.assign(window.metrics, m); log('metrics', m) }
 })
 player.on('error', e => log('error', e))
+player.on('fonts', f => { window.metrics.fonts = f; log('fonts', f) })
 player.on('mediaAction', a => log('mediaAction', a))
 
 $('next').onclick = () => { player.advance(player.nextOf(player.position)); show() }

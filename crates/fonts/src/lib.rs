@@ -10,6 +10,7 @@
 
 mod fallback;
 mod fontdb;
+pub mod request;
 pub mod script;
 mod shape;
 
@@ -204,6 +205,19 @@ mod tests {
         let f = fontdb::last_resort_face();
         assert_eq!(f.family, fontdb::LAST_RESORT_FAMILY);
         assert!(f.upem > 0.0);
+    }
+
+    #[test]
+    fn a_font_added_as_another_family_draws_that_family() {
+        // The player fetches Tinos for a missing serif "Old Foundry Serif", or Montserrat's 300
+        // face for "Montserrat Light", and adds it under the name the document uses.
+        let db = FontDb::with_font_dirs(Vec::new());
+        let Some(bytes) = bundled().last().map(|b| b.to_vec()) else { panic!("no bundled faces") };
+        assert!(!db.has_family("Old Foundry Serif"));
+        assert_eq!(db.add_font_as(bytes.clone(), "Old Foundry Serif"), 1);
+        assert!(db.has_family("Old Foundry Serif"));
+        assert_eq!(db.document_face("Old Foundry Serif", "Regular").family, "Old Foundry Serif");
+        assert_eq!(db.add_font_as(bytes, "old foundry serif"), 0, "the same face again adds nothing");
     }
 
     #[test]

@@ -1,11 +1,12 @@
 // DeckCraft player worker: owns the deck and the canvas; the page sends positions and gets
 // pictures drawn, media clips and media cues back.
 //
-// In:  {type: 'init', glueUrl, wasmUrl, canvas: OffscreenCanvas, fonts: [url]}
+// In:  {type: 'init', glueUrl, wasmUrl, canvas: OffscreenCanvas, fonts: [url], fontsBase}
 //      {type: 'open', url} | {type: 'open', bytes: ArrayBuffer}
 //      {type: 'resize', width}
 //      {type: 'jump', slide, step} | {type: 'advance', slide, step}
 // Out: {type: 'initialized', loadMs}
+//      {type: 'fonts', loaded: [{family, from}], missing: [family]} when fontsBase is set
 //      {type: 'ready', info, media, openMs}
 //      {type: 'state', slide, step, animating}
 //      {type: 'cues', cues: [{shape, action}]}
@@ -16,6 +17,7 @@
 
 let player = null
 let canvas = null
+let fontsBase = null
 let ctx = null // 2D fallback when WebGL2 isn't available
 let gl = null
 let scheduled = false
@@ -119,6 +121,48 @@ const gpu = {
   },
 }
 
+// Fonts on demand: with `fontsBase`, a deck's fonts come from a font server laid out as
+// <fontsBase>families/<key>/family.json plus the faces it lists (entropy's packages/fonts).
+const familyKey = name => name.trim().toLowerCase().replace(/\s+/g, '-')
+
+// The face nearest `weight` in the asked style (the heavier on a tie), else in the other style.
+function pickFace (faces, weight, italic) {
+  const nearest = list => list.reduce((best, f) => {
+    if (!best) return f
+    const d = Math.abs(f.weight - weight) - Math.abs(best.weight - weight)
+    return d < 0 || (d === 0 && f.weight > best.weight) ? f : best
+  }, null)
+  return nearest(faces.filter(f => f.italic === italic)) || nearest(faces)
+}
+
+// For each request ({family, weight, italic, candidates} from WebPlayer.fontRequests), the
+// first candidate the server has: [{family, from, bytes}]. A family's family.json and each file
+// are fetched once; a miss or a failure moves on to the next candidate.
+async function loadFonts (requests, base, fetchFn = fetch) {
+  const root = base.endsWith('/') ? base : `${base}/`
+  const cache = new Map()
+  const once = (key, load) => {
+    if (!cache.has(key)) cache.set(key, load().catch(() => null))
+    return cache.get(key)
+  }
+  const get = async url => {
+    const r = await fetchFn(url)
+    if (!r.ok) throw new Error(`${url}: ${r.status}`)
+    return r
+  }
+  const url = (name, file) => `${root}families/${familyKey(name)}/${file}`
+  const one = async req => {
+    for (const name of req.candidates) {
+      const family = await once(url(name, 'family.json'), () => get(url(name, 'family.json')).then(r => r.json()))
+      const face = family && pickFace(family.faces || [], req.weight, req.italic)
+      const buf = face && await once(url(name, face.file), () => get(url(name, face.file)).then(r => r.arrayBuffer()))
+      if (buf) return { family: req.family, from: family.family, bytes: new Uint8Array(buf) }
+    }
+    return null
+  }
+  return (await Promise.all(requests.map(one))).filter(Boolean)
+}
+
 const now = () => performance.now() / 1000
 const post = (msg, transfer) => self.postMessage(msg, transfer || [])
 
@@ -166,8 +210,9 @@ function tick () {
   if (f.animating) schedule()
 }
 
-async function init ({ glueUrl, wasmUrl, canvas: c, fonts }) {
+async function init ({ glueUrl, wasmUrl, canvas: c, fonts, fontsBase: fb }) {
   const t0 = performance.now()
+  fontsBase = fb || null
   self.importScripts(glueUrl)
   await wasm_bindgen({ module_or_path: wasmUrl })
   const files = await Promise.all((fonts || []).map(url => fetch(url).then(r => (r.ok ? r.arrayBuffer() : null)).catch(() => null)))
@@ -177,13 +222,24 @@ async function init ({ glueUrl, wasmUrl, canvas: c, fonts }) {
   post({ type: 'initialized', loadMs: performance.now() - t0 })
 }
 
-async function open ({ url, bytes }) {
+async function open ({ url, bytes, download }) {
   const t0 = performance.now()
-  const buf = bytes || await fetch(url).then(r => {
+  const buf = bytes || await (download || fetch(url)).then(r => {
     if (!r.ok) throw new Error(`could not download the presentation (${r.status})`)
     return r.arrayBuffer()
   })
   player = new wasm_bindgen.WebPlayer(new Uint8Array(buf))
+  if (fontsBase) {
+    // Before the first frame, so text never switches font in front of the audience.
+    const requests = player.fontRequests()
+    const loaded = await loadFonts(requests, fontsBase)
+    for (const f of loaded) {
+      if (f.family) wasm_bindgen.WebPlayer.addFontAs(f.bytes, f.family)
+      else wasm_bindgen.WebPlayer.addFont(f.bytes)
+    }
+    const missing = requests.filter(r => r.family && !loaded.some(f => f.family === r.family)).map(r => r.family)
+    post({ type: 'fonts', loaded: loaded.map(f => ({ family: f.family || null, from: f.from })), missing: [...new Set(missing)] })
+  }
   player.setGpuTransitions(!!gl)
   const media = player.media()
   post({ type: 'ready', info: player.info(), media, openMs: performance.now() - t0 }, media.map(m => m.data.buffer))
@@ -205,6 +261,18 @@ async function handle (m) {
   }
 }
 
-// Messages run one after the other: an `open` sent right after `init` waits for the module.
-let queue = Promise.resolve()
-self.onmessage = ({ data }) => { queue = queue.then(() => handle(data)) }
+if (typeof module === 'object' && module.exports) {
+  // Node, for the tests (worker.test.js).
+  module.exports = { familyKey, pickFace, loadFonts }
+} else {
+  // Messages run one after the other: an `open` sent right after `init` waits for the module,
+  // but its download starts now, alongside the module's.
+  let queue = Promise.resolve()
+  self.onmessage = ({ data }) => {
+    if (data.type === 'open' && data.url && !data.bytes) {
+      data.download = fetch(data.url)
+      data.download.catch(() => {})
+    }
+    queue = queue.then(() => handle(data))
+  }
+}

@@ -213,12 +213,21 @@ mod font_requests {
     #[test]
     fn scripts_latin_fonts_miss_ask_for_their_family_once() {
         let only = |family: &'static str| move |f: &str| f != family;
-        // Kanji with kana is Japanese; kanji alone is taken as Chinese.
-        let r =
-            requests_for(&[used("Calibri", &[(false, false)], "日本の", None), used("Arial", &[(false, false)], "語", None)], only("BIZ UDPGothic"));
+        // Han text, Japanese or Chinese, takes BIZ UDPGothic (Noto CJK is excluded).
+        let r = requests_for(
+            &[used("Calibri", &[(false, false)], "日本の", None), used("Arial", &[(false, false)], "中文", None)],
+            only("BIZ UDPGothic"),
+        );
         assert_eq!(r, vec![req("", 400, false, &["BIZ UDPGothic"])]);
-        let r = requests_for(&[used("Calibri", &[(false, false)], "中文", None)], only("Noto Sans SC"));
-        assert_eq!(r, vec![req("", 400, false, &["Noto Sans SC"])]);
+        let r = requests_for(&[used("Calibri", &[(false, false)], "한국어", None)], only("Nanum Gothic"));
+        assert_eq!(r, vec![req("", 400, false, &["Nanum Gothic"])]);
+    }
+
+    #[test]
+    fn a_deck_asks_for_a_bounded_number_of_fonts() {
+        // A hostile file can name thousands of families; the host fetches at most this many.
+        let many: Vec<UsedFont> = (0..500).map(|i| used(&format!("Family {i}"), &[(false, false), (true, true)], "Hi", None)).collect();
+        assert_eq!(requests_for(&many, none_loaded).len(), MAX_FONT_REQUESTS);
     }
 
     #[test]

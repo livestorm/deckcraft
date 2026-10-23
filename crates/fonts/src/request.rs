@@ -100,14 +100,26 @@ pub fn split_weight(family: &str) -> (&str, Option<u16>) {
     }
 }
 
+/// Families never fetched, even when a document names them (AGENTS.md §1.1: no Adobe-authored
+/// visual design): Adobe's Source families and Noto CJK, which is Source Han renamed (on Google
+/// Fonts: Noto Sans/Serif JP, KR, SC, TC, HK).
+pub fn is_excluded_family(family: &str) -> bool {
+    let f = family.trim().to_ascii_lowercase();
+    let noto_cjk = ["noto sans ", "noto serif "]
+        .iter()
+        .any(|p| f.strip_prefix(p).is_some_and(|rest| rest.starts_with("cjk") || ["jp", "kr", "sc", "tc", "hk"].contains(&rest)));
+    noto_cjk || ["source sans", "source serif", "source han", "source code"].iter().any(|p| f.starts_with(p))
+}
+
 /// The families to try for `family`, in order: itself, its base family when the name carries a
-/// weight, their open stand-ins, then the generic family for `category`. No duplicates.
+/// weight, their open stand-ins, then the generic family for `category`. No duplicates, and no
+/// excluded family ([`is_excluded_family`]).
 pub fn candidates(family: &str, category: Category) -> Vec<String> {
     let (base, _) = split_weight(family);
     let mut out: Vec<String> = Vec::new();
     let names = [family, base].into_iter().chain(substitutes(family).iter().copied()).chain(substitutes(base).iter().copied());
     for name in names.chain([category.generic_family()]) {
-        if !out.iter().any(|o| o.eq_ignore_ascii_case(name)) {
+        if !is_excluded_family(name) && !out.iter().any(|o| o.eq_ignore_ascii_case(name)) {
             out.push(name.to_string());
         }
     }
@@ -115,17 +127,35 @@ pub fn candidates(family: &str, category: Category) -> Vec<String> {
 }
 
 /// The open family that draws text in `script` when the document's fonts don't, for scripts
-/// Latin fonts don't cover.
+/// Latin fonts don't cover. Han text (Chinese or Japanese) takes BIZ UDPGothic: the Chinese faces
+/// on Google Fonts are Noto CJK, which is excluded, so Chinese draws with Japanese glyph shapes.
 pub fn script_family(script: ScriptTag) -> Option<&'static str> {
     Some(match &script {
-        b"Jpan" | b"Hira" | b"Kana" => "BIZ UDPGothic",
-        b"Hang" | b"Kore" => "Noto Sans KR",
-        b"Hans" | b"Hani" => "Noto Sans SC",
-        b"Hant" => "Noto Sans TC",
+        b"Jpan" | b"Hira" | b"Kana" | b"Hani" | b"Hans" | b"Hant" => "BIZ UDPGothic",
+        b"Hang" | b"Kore" => "Nanum Gothic",
         b"Arab" => "Noto Naskh Arabic",
         b"Hebr" => "Noto Sans Hebrew",
-        b"Thai" => "Noto Sans Thai",
+        b"Syrc" => "Noto Sans Syriac",
+        b"Thaa" => "Noto Sans Thaana",
+        b"Nkoo" => "Noto Sans NKo",
         b"Deva" => "Noto Sans Devanagari",
+        b"Beng" => "Noto Sans Bengali",
+        b"Guru" => "Noto Sans Gurmukhi",
+        b"Gujr" => "Noto Sans Gujarati",
+        b"Orya" => "Noto Sans Oriya",
+        b"Taml" => "Noto Sans Tamil",
+        b"Telu" => "Noto Sans Telugu",
+        b"Knda" => "Noto Sans Kannada",
+        b"Mlym" => "Noto Sans Malayalam",
+        b"Sinh" => "Noto Sans Sinhala",
+        b"Thai" => "Noto Sans Thai",
+        b"Laoo" => "Noto Sans Lao",
+        b"Khmr" => "Noto Sans Khmer",
+        b"Mymr" => "Noto Sans Myanmar",
+        b"Tibt" => "Noto Serif Tibetan",
+        b"Ethi" => "Noto Sans Ethiopic",
+        b"Geor" => "Noto Sans Georgian",
+        b"Armn" => "Noto Sans Armenian",
         _ => return None,
     })
 }
@@ -182,9 +212,46 @@ mod tests {
     }
 
     #[test]
-    fn scripts_latin_fonts_miss_have_a_family() {
+    fn every_script_latin_fonts_miss_has_an_allowed_family() {
+        // One character of each script `script_of` knows besides Latin, Greek and Cyrillic.
+        let samples = "ابپ ܐ ހ ߊ א ঌ அ ఆ ಆ അ අ ກ ក ગ ਗ ଗ က አ ა ա ཀ ก अ 한 字";
+        for c in samples.chars().filter(|c| !c.is_whitespace()) {
+            let script = crate::script::script_of(c).unwrap_or_else(|| panic!("{c} has no script"));
+            let family = script_family(script).unwrap_or_else(|| panic!("{c} ({}) has no family", String::from_utf8_lossy(&script)));
+            assert!(!is_excluded_family(family), "{family} is excluded");
+        }
         assert_eq!(script_family(*b"Jpan"), Some("BIZ UDPGothic"));
-        assert_eq!(script_family(*b"Arab"), Some("Noto Naskh Arabic"));
+        assert_eq!(script_family(*b"Hani"), Some("BIZ UDPGothic"));
+        assert_eq!(script_family(*b"Hang"), Some("Nanum Gothic"));
         assert_eq!(script_family(*b"Latn"), None);
+    }
+
+    #[test]
+    fn adobe_and_noto_cjk_families_are_excluded() {
+        for f in [
+            "Source Sans 3",
+            "source serif 4",
+            "Source Han Sans",
+            "Source Code Pro",
+            "Noto Sans CJK JP",
+            "Noto Serif CJK SC",
+            "Noto Sans SC",
+            "Noto Sans TC",
+            "Noto Sans HK",
+            "Noto Sans JP",
+            "Noto Sans KR",
+            "Noto Serif KR",
+        ] {
+            assert!(is_excluded_family(f), "{f}");
+        }
+        for f in ["Open Sans", "Noto Sans", "Noto Sans Bengali", "Noto Naskh Arabic", "Sourcery"] {
+            assert!(!is_excluded_family(f), "{f}");
+        }
+    }
+
+    #[test]
+    fn excluded_families_are_never_candidates() {
+        assert_eq!(candidates("Source Sans 3", Category::Sans), ["Open Sans", "Inter", "Arimo"]);
+        assert!(candidates("Noto Sans SC", Category::Sans).iter().all(|c| !is_excluded_family(c)));
     }
 }

@@ -626,18 +626,31 @@ pub struct FontRequest {
     pub candidates: Vec<String>,
 }
 
-/// The requests for the families a deck uses, given which are already available (`has`).
+/// At most this many font requests per deck: a file can name thousands of families, and each
+/// request is a download for the host.
+pub const MAX_FONT_REQUESTS: usize = 64;
+
+/// The requests for the families a deck uses, given which are already available (`has`), in
+/// first-use order and at most [`MAX_FONT_REQUESTS`] of them (script faces first, so a long list
+/// of families can't crowd out the face that draws a language).
 fn requests_for(used: &[deckcraft_model::fonts::UsedFont], has: impl Fn(&str) -> bool) -> Vec<FontRequest> {
     use deckcraft_fonts::request::{candidates, category_of, script_family, split_weight};
     let mut out: Vec<FontRequest> = Vec::new();
     let mut push = |r: FontRequest| {
-        if !out
-            .iter()
-            .any(|o| o.family.eq_ignore_ascii_case(&r.family) && o.weight == r.weight && o.italic == r.italic && o.candidates == r.candidates)
+        if out.len() < MAX_FONT_REQUESTS
+            && !out
+                .iter()
+                .any(|o| o.family.eq_ignore_ascii_case(&r.family) && o.weight == r.weight && o.italic == r.italic && o.candidates == r.candidates)
         {
             out.push(r);
         }
     };
+    let scripts = used.iter().flat_map(|u| u.chars.chars()).filter_map(deckcraft_fonts::script::script_of);
+    for family in scripts.filter_map(script_family) {
+        if !has(family) {
+            push(FontRequest { family: String::new(), weight: 400, italic: false, candidates: vec![family.to_string()] });
+        }
+    }
     for u in used.iter().filter(|u| !has(&u.family) && !deckcraft_text::is_symbol_font(&u.family)) {
         let hint = u.hint.as_ref();
         let category = category_of(&u.family, hint.and_then(|h| h.pitch_family), hint.and_then(|h| h.panose.as_deref()));
@@ -645,15 +658,6 @@ fn requests_for(used: &[deckcraft_model::fonts::UsedFont], has: impl Fn(&str) ->
         for &(bold, italic) in &u.styles {
             let weight = named.unwrap_or(if bold { 700 } else { 400 });
             push(FontRequest { family: u.family.clone(), weight, italic, candidates: candidates(&u.family, category) });
-        }
-    }
-    let scripts: Vec<_> = used.iter().flat_map(|u| u.chars.chars()).filter_map(deckcraft_fonts::script::script_of).collect();
-    // Han characters are Japanese when the deck has kana too, else taken as Chinese.
-    let japanese = scripts.iter().any(|s| matches!(s, b"Hira" | b"Kana"));
-    let scripts = scripts.into_iter().map(|s| if japanese && &s == b"Hani" { *b"Jpan" } else { s });
-    for family in scripts.filter_map(script_family) {
-        if !has(family) {
-            push(FontRequest { family: String::new(), weight: 400, italic: false, candidates: vec![family.to_string()] });
         }
     }
     out

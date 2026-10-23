@@ -530,7 +530,10 @@ pub fn rpr(imp: &mut Imp, part: &Part, r: &El) -> RunProps {
             }
             "highlight" => p.highlight = color(e),
             "uFill" => p.underline_color = e.child("solidFill").and_then(color),
-            "latin" => p.font = e.attr("typeface").filter(|t| !t.is_empty()).map(String::from),
+            "latin" => {
+                p.font = e.attr("typeface").filter(|t| !t.is_empty()).map(String::from);
+                p.font_hint = super::font_hint(e);
+            }
             "ea" => p.font_ea = e.attr("typeface").filter(|t| !t.is_empty()).map(String::from),
             "cs" => p.font_cs = e.attr("typeface").filter(|t| !t.is_empty()).map(String::from),
             "sym" => p.font_sym = e.attr("typeface").filter(|t| !t.is_empty()).map(String::from),

@@ -356,11 +356,36 @@ pub struct Hyperlink {
     pub zoom_return: Option<crate::SlideId>,
 }
 
+/// What a document says about a font besides its name (`panose` and `pitchFamily` on
+/// `a:latin`): enough to pick a stand-in of the same kind (serif, sans, monospace) when the font
+/// is missing. It describes `typeface` only, so a font changed later leaves a hint that no longer
+/// matches and is ignored.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct FontHint {
+    pub typeface: String,
+    /// 20 hex digits (ST_Panose).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub panose: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pitch_family: Option<u8>,
+}
+
+impl FontHint {
+    /// The hint, when it describes `typeface`.
+    pub fn for_typeface<'a>(hint: Option<&'a FontHint>, typeface: &str) -> Option<&'a FontHint> {
+        hint.filter(|h| h.typeface.eq_ignore_ascii_case(typeface.trim()))
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct RunProps {
     /// Latin font family, or a theme reference `+mj-lt` / `+mn-lt`.
     pub font: Option<String>,
+    /// `panose` and `pitchFamily` of the Latin font, when the file gave them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_hint: Option<FontHint>,
     pub font_ea: Option<String>,
     pub font_cs: Option<String>,
     pub font_sym: Option<String>,
@@ -404,6 +429,7 @@ impl RunProps {
         }
         take!(
             font,
+            font_hint,
             font_ea,
             font_cs,
             font_sym,

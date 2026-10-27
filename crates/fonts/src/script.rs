@@ -97,6 +97,12 @@ fn arabic_common(cp: u32) -> bool {
     matches!(cp, 0x060C | 0x061B | 0x061F | 0x0640 | 0x064B..=0x0655 | 0x0670 | 0xFEFF | 0xFD3E | 0xFD3F)
 }
 
+/// The first character of every range `script_of` knows, so tests can cover each script.
+#[cfg(test)]
+pub(crate) fn range_starts() -> impl Iterator<Item = char> {
+    RANGES.iter().filter_map(|(lo, _, _)| char::from_u32(*lo))
+}
+
 /// The script of `c`, or `None` for Common and Inherited characters (spaces, digits,
 /// punctuation, combining marks), which take the script of their neighbours.
 pub fn script_of(c: char) -> Option<ScriptTag> {

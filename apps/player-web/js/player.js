@@ -4,19 +4,23 @@
 //   const p = new DeckcraftPlayer(container, { base: '/deckcraft/0.1.0/', fonts: [...] })
 // `base` holds worker.js, deckcraft_player.js and deckcraft_player_bg.wasm. When a bundler gives
 // them their own (hashed) URLs, pass those instead: { workerUrl, glueUrl, wasmUrl, fonts }.
+// `fontsBase` is a font server (entropy's packages/fonts CDN): each deck then downloads just the
+// fonts it uses, before its first slide is drawn. `fonts` are added up front either way.
 //   await p.open(url)
 //   p.advance(p.nextOf(p.position)) // a click
 //   p.jump(pos)                     // a jump, at rest
 //
 // Events (p.on(name, fn)): ready(info), state({slide, step, animating}), metrics(m), error(err),
+// fonts({loaded: [{family, from}], missing: [family]}) with fontsBase,
 // mediaAction({shape, action, at}) when someone with controls plays or pauses a clip themselves.
 
 export class DeckcraftPlayer {
-  constructor (container, { base = '', workerUrl, glueUrl, wasmUrl, fonts = [], controls = false } = {}) {
+  constructor (container, { base = '', workerUrl, glueUrl, wasmUrl, fonts = [], fontsBase = null, controls = false } = {}) {
     this.container = container
     this.base = base
     this.urls = { worker: workerUrl, glue: glueUrl, wasm: wasmUrl }
     this.fonts = fonts
+    this.fontsBase = fontsBase
     this.controls = controls
     this.handlers = {}
     this.info = null
@@ -66,6 +70,7 @@ export class DeckcraftPlayer {
       wasmUrl: url(this.urls.wasm, 'deckcraft_player_bg.wasm'),
       canvas: offscreen,
       fonts: this.fonts.map(f => url(f)),
+      fontsBase: this.fontsBase && new URL(this.fontsBase, location.href).href,
     }, [offscreen])
     this.resizeObserver?.disconnect()
     this.resizeObserver = new ResizeObserver(() => this.resize())
@@ -140,6 +145,7 @@ export class DeckcraftPlayer {
       case 'state': this.emit('state', m); break
       case 'cues': for (const c of m.cues) this.cue(c.shape, c.action); break
       case 'metrics': this.emit('metrics', m); break
+      case 'fonts': this.emit('fonts', { loaded: m.loaded, missing: m.missing }); break
       case 'error':
         if (!this.info) this.rejectInit(new Error(m.message))
         if (m.fatal) this.crashed(m.message)

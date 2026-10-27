@@ -214,6 +214,19 @@ impl Player {
         FontDb::global().add_font(bytes)
     }
 
+    /// Add a font file under the family name a document uses (a [`FontRequest`]'s `family`), so
+    /// text in that family draws with it. Returns the faces added.
+    pub fn add_font_as(bytes: Vec<u8>, family: &str) -> usize {
+        FontDb::global().add_font_as(bytes, family)
+    }
+
+    /// The fonts this deck needs and the machine lacks, for the host to fetch: each style of each
+    /// missing family (with the families to try for it), and a face for each script the Latin
+    /// fonts don't draw. Fonts the deck embeds are already installed and asked for nothing.
+    pub fn font_requests(&self) -> Vec<FontRequest> {
+        requests_for(&deckcraft_model::fonts::used_fonts(&self.pres), |f| FontDb::global().has_family(f))
+    }
+
     /// Hand transition frames out as layers ([`Tick::transition`]) for the host to draw on a GPU,
     /// rather than compositing them on the CPU. Morph is always rendered here.
     pub fn set_gpu_transitions(&mut self, on: bool) {
@@ -612,6 +625,55 @@ fn state_for(tl: &Timeline, id: ShapeId, step: usize, t: f64) -> ShapeState {
             })
             .collect(),
     }
+}
+
+/// A font the host should fetch for a deck: the first of `candidates` the font server has, in the
+/// weight and style closest to `weight` / `italic`. Added with [`Player::add_font_as`] under
+/// `family`, or with [`Player::add_font`] when `family` is empty (a face for a script, which text
+/// falls back to by itself).
+#[derive(Clone, Debug, PartialEq)]
+pub struct FontRequest {
+    pub family: String,
+    pub weight: u16,
+    pub italic: bool,
+    pub candidates: Vec<String>,
+}
+
+/// At most this many font requests per deck: a file can name thousands of families, and each
+/// request is a download for the host.
+pub const MAX_FONT_REQUESTS: usize = 64;
+
+/// The requests for the families a deck uses, given which are already available (`has`), in
+/// first-use order and at most [`MAX_FONT_REQUESTS`] of them (script faces first, so a long list
+/// of families can't crowd out the face that draws a language).
+fn requests_for(used: &[deckcraft_model::fonts::UsedFont], has: impl Fn(&str) -> bool) -> Vec<FontRequest> {
+    use deckcraft_fonts::request::{candidates, category_of, script_family, split_weight};
+    let mut out: Vec<FontRequest> = Vec::new();
+    let mut push = |r: FontRequest| {
+        if out.len() < MAX_FONT_REQUESTS
+            && !out
+                .iter()
+                .any(|o| o.family.eq_ignore_ascii_case(&r.family) && o.weight == r.weight && o.italic == r.italic && o.candidates == r.candidates)
+        {
+            out.push(r);
+        }
+    };
+    let scripts = used.iter().flat_map(|u| u.chars.chars()).filter_map(deckcraft_fonts::script::script_of);
+    for family in scripts.filter_map(script_family) {
+        if !has(family) {
+            push(FontRequest { family: String::new(), weight: 400, italic: false, candidates: vec![family.to_string()] });
+        }
+    }
+    for u in used.iter().filter(|u| !has(&u.family) && !deckcraft_text::is_symbol_font(&u.family)) {
+        let hint = u.hint.as_ref();
+        let category = category_of(&u.family, hint.and_then(|h| h.pitch_family), hint.and_then(|h| h.panose.as_deref()));
+        let named = split_weight(&u.family).1;
+        for &(bold, italic) in &u.styles {
+            let weight = named.unwrap_or(if bold { 700 } else { 400 });
+            push(FontRequest { family: u.family.clone(), weight, italic, candidates: candidates(&u.family, category) });
+        }
+    }
+    out
 }
 
 /// Fonts the deck carries (TrueType or Embedded OpenType), installed for its text.

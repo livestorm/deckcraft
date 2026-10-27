@@ -60,7 +60,19 @@ families excluded by `crates/fonts/build.rs`:
 | Montserrat, Lato, Open Sans, Roboto, Merriweather, Playfair Display, Poppins, Nunito Sans | OFL-1.1 | Theme fonts |
 | BIZ UDPGothic, BIZ UDMincho, Shippori Mincho, Noto Sans Arabic | OFL-1.1 | Japanese and Arabic text |
 
-Web (wasm32) builds embed only Inter Regular/Bold and BIZ UDPGothic Regular.
+Web (wasm32) builds embed only Inter Regular/Bold and BIZ UDPGothic Regular. The browser player
+(`apps/player-web`, built with `CRAFT_FONTS_EMBED=none`) embeds none of them.
+
+## Fetched at runtime by the browser player
+
+The browser player ships no font files. With `fontsBase` set, it downloads the fonts each deck
+uses from Livestorm's font CDN, a mirror of [Google Fonts](https://fonts.google.com) maintained in
+entropy's `packages/fonts` (families under the SIL Open Font License 1.1, the Apache License 2.0
+or the Ubuntu Font Licence 1.0, per family on Google Fonts). Nothing from it is committed here or
+compiled in. The stand-ins it asks for first are open families: Carlito, Caladea, Arimo, Tinos,
+Cousine and Inter (OFL-1.1 or Apache-2.0); for scripts Latin fonts miss, BIZ UDPGothic, Nanum
+Gothic, Bpmf Huninn and the non-CJK Noto families (OFL-1.1). It never fetches Adobe's Source families or Noto
+CJK (AGENTS.md §1.1).
 
 ## PDF writer colour profiles
 

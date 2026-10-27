@@ -19,8 +19,6 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # Same craft-fonts commit as ci.yml and release.yml.
-  CRAFT_FONTS_REF: 43913056ce82a3fdad0ef69f6b88d1dc922a8104
   BINARYEN_VERSION: 132.0.0
   # Trusted publishing needs npm 11.5.1 or later.
   NPM_VERSION: 11.6.2
@@ -31,12 +29,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Check out craft-fonts
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: storytold/craft-fonts
-          ref: ${{ env.CRAFT_FONTS_REF }}
-          path: craft-fonts
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           targets: wasm32-unknown-unknown
@@ -53,8 +45,6 @@ jobs:
           test "${GITHUB_REF_NAME}" = "player-web-v$version" || {
             echo "tag ${GITHUB_REF_NAME} does not match package version $version"; exit 1; }
       - name: Pack
-        env:
-          CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
         run: sh apps/player-web/pack.sh "$RUNNER_TEMP/player-npm"
       - name: Publish
         working-directory: ${{ runner.temp }}/player-npm

@@ -32,14 +32,15 @@ pub fn bundled() -> Vec<&'static [u8]> {
 }
 
 /// Open substitutes for families documents often ask for but we can't ship (metric-compatible
-/// where one exists), tried in order after the family itself.
+/// where one exists), tried in order after the family itself. Arimo, Tinos and Cousine have the
+/// widths of Arial, Times New Roman and Courier New, like Liberation's, and are Google Fonts.
 pub fn substitutes(family: &str) -> &'static [&'static str] {
     match family.to_ascii_lowercase().as_str() {
         "calibri" | "calibri light" => &["Carlito", "Liberation Sans", "Arial", "Inter"],
         "cambria" | "cambria math" => &["Caladea", "Liberation Serif", "Times New Roman", "Merriweather"],
-        "arial" | "helvetica" | "helvetica neue" | "arial nova" => &["Liberation Sans", "Arial", "Helvetica Neue", "Helvetica", "Inter"],
-        "times new roman" | "times" => &["Liberation Serif", "Times New Roman", "Times", "Merriweather"],
-        "courier new" | "courier" | "consolas" | "menlo" => &["Liberation Mono", "Courier New", "Menlo", "Courier"],
+        "arial" | "helvetica" | "helvetica neue" | "arial nova" => &["Liberation Sans", "Arimo", "Arial", "Helvetica Neue", "Helvetica", "Inter"],
+        "times new roman" | "times" => &["Liberation Serif", "Tinos", "Times New Roman", "Times", "Merriweather"],
+        "courier new" | "courier" | "consolas" | "menlo" => &["Liberation Mono", "Cousine", "Courier New", "Menlo", "Courier"],
         "aptos" | "aptos display" | "aptos narrow" | "segoe ui" | "segoe ui light" | "segoe ui semibold" | "tahoma" | "verdana" => {
             &["Inter", "Helvetica Neue", "Arial", "Liberation Sans"]
         }
@@ -871,9 +872,25 @@ impl FontDb {
         self.add_fonts(vec![bytes])
     }
 
+    /// Add a font file under another family name: its faces keep their styles but answer to
+    /// `family`. The browser player adds the stand-in it fetched for a missing family this way
+    /// (Tinos for an unknown serif, Montserrat's 300 face for "Montserrat Light"), so text in that
+    /// family draws with it. Returns the number of faces added.
+    pub fn add_font_as(&self, bytes: Vec<u8>, family: &str) -> usize {
+        let family = family.trim();
+        if family.is_empty() {
+            return 0;
+        }
+        self.add_named(vec![bytes], Some(family))
+    }
+
     /// Add font files together: lookups see all of their faces or none, never part of a family.
     /// Returns the number of faces added.
     fn add_fonts(&self, files: Vec<Vec<u8>>) -> usize {
+        self.add_named(files, None)
+    }
+
+    fn add_named(&self, files: Vec<Vec<u8>>, alias: Option<&str>) -> usize {
         let present = |faces: &[Arc<FontFace>], family: &str, style: &str| {
             faces.iter().any(|f| f.family.eq_ignore_ascii_case(family) && f.style.eq_ignore_ascii_case(style))
         };
@@ -881,6 +898,7 @@ impl FontDb {
         for bytes in files {
             let data = Arc::new(bytes);
             for (i, family, style, coords) in enumerate_faces(&data) {
+                let family = alias.map_or(family, str::to_string);
                 if present(&self.read_faces(), &family, &style) {
                     continue;
                 }

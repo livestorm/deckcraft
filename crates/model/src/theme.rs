@@ -9,6 +9,9 @@ use crate::style::{ColorRef, Effects, Fill, Glow, Gradient, GradientShape, Gradi
 #[serde(default, rename_all = "camelCase")]
 pub struct FontSet {
     pub latin: String,
+    /// `panose` and `pitchFamily` of the Latin face, when the theme gave them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latin_hint: Option<crate::text::FontHint>,
     pub ea: String,
     pub cs: String,
     /// Per-script typefaces (`a:font script="Arab" typeface="…"`), in document order.

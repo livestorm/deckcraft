@@ -569,7 +569,6 @@ fn para_count(s: &Shape) -> u32 {
     s.text.as_ref().map(|t| t.paragraphs.iter().filter(|p| !p.is_empty()).count()).unwrap_or(0).min(10_000) as u32
 }
 
-/// Write `p:timing` for a slide's animations.
 /// Whether a slide's timing has anything to write: animations, or a clip with playback options.
 pub fn has_timing(anims: &[Animation], shapes: &[Shape]) -> bool {
     fn options(shapes: &[Shape], depth: usize) -> bool {
@@ -637,6 +636,7 @@ fn media_node(w: &mut W, ids: &mut Ids, m: &deckcraft_model::MediaClip, spid: u3
     w.close(tag);
 }
 
+/// Write `p:timing` for a slide's animations.
 pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idmap: &IdMap) {
     let mut grp_count: std::collections::HashMap<u32, u32> = Default::default();
     let mut main: Vec<Eff> = vec![];

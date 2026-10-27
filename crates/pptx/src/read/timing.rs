@@ -94,7 +94,6 @@ fn max_dur(e: &El, depth: usize) -> Option<u32> {
     best
 }
 
-/// Flatten the timing tree into the Animation Pane list.
 /// Playback options PowerPoint keeps in the timing, not on the picture: each `p:audio` /
 /// `p:video` node's `p:cMediaNode` gives its clip's volume (`vol`, 100000 = 100%), Loop until
 /// Stopped (`repeatCount="indefinite"` on its `p:cTn`) and Hide While Not Playing
@@ -143,6 +142,7 @@ pub fn media_nodes(ctx: &IdCtx, timing: &El, shapes: &mut [Shape]) {
     }
 }
 
+/// Flatten the timing tree into the Animation Pane list.
 pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, _shapes: &[Shape]) -> Vec<Animation> {
     let _ = (imp, part);
     let Some(tn) = timing.child("tnLst") else { return vec![] };

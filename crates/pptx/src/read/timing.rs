@@ -1,7 +1,7 @@
 //! Slide transitions (`p:transition`) and animations (`p:timing`).
 
-use deckcraft_model::Shape;
 use deckcraft_model::anim::{AnimClass, AnimStart, Animation, TextBuild, Transition};
+use deckcraft_model::{Shape, ShapeId, ShapeKind};
 
 use super::shapes::IdCtx;
 use super::{Imp, Part, dml};
@@ -95,6 +95,54 @@ fn max_dur(e: &El, depth: usize) -> Option<u32> {
 }
 
 /// Flatten the timing tree into the Animation Pane list.
+/// Playback options PowerPoint keeps in the timing, not on the picture: each `p:audio` /
+/// `p:video` node's `p:cMediaNode` gives its clip's volume (`vol`, 100000 = 100%), Loop until
+/// Stopped (`repeatCount="indefinite"` on its `p:cTn`) and Hide While Not Playing
+/// (`showWhenStopped="0"`).
+pub fn media_nodes(ctx: &IdCtx, timing: &El, shapes: &mut [Shape]) {
+    fn nodes<'a>(e: &'a El, depth: usize, out: &mut Vec<&'a El>) {
+        if depth > 64 || out.len() >= 1000 {
+            return;
+        }
+        for c in e.elements() {
+            if c.is("cMediaNode") {
+                out.push(c);
+            } else {
+                nodes(c, depth + 1, out);
+            }
+        }
+    }
+    fn clip(shapes: &mut [Shape], id: ShapeId, depth: usize) -> Option<&mut deckcraft_model::MediaClip> {
+        if depth > 64 {
+            return None;
+        }
+        for s in shapes {
+            if s.id == id {
+                return match &mut s.kind {
+                    ShapeKind::Media(m) => Some(m),
+                    _ => None,
+                };
+            }
+            if let Some(found) = s.children_mut().and_then(|c| clip(c, id, depth + 1)) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    let Some(tn) = timing.child("tnLst") else { return };
+    let mut found = Vec::new();
+    nodes(tn, 0, &mut found);
+    for node in found {
+        let Some(id) = node.path(&["tgtEl", "spTgt"]).and_then(|t| t.u32("spid")).and_then(|f| ctx.map.get(&f).copied()) else { continue };
+        let Some(m) = clip(shapes, id, 0) else { continue };
+        if let Some(vol) = node.attr("vol").and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite()) {
+            m.volume = (vol / 100_000.0).clamp(0.0, 1.0);
+        }
+        m.loop_play = node.child("cTn").and_then(|c| c.attr("repeatCount")) == Some("indefinite");
+        m.hide_while_not_playing = matches!(node.attr("showWhenStopped"), Some("0" | "false"));
+    }
+}
+
 pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, _shapes: &[Shape]) -> Vec<Animation> {
     let _ = (imp, part);
     let Some(tn) = timing.child("tnLst") else { return vec![] };

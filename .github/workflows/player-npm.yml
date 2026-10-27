@@ -32,6 +32,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           targets: wasm32-unknown-unknown
+      # The runner's own Node keeps its globals under /usr/local, which `npm install -g` can't write.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: lts/*
+          registry-url: https://registry.npmjs.org
       - name: Tools
         run: |
           # wasm-bindgen-cli must match the wasm-bindgen crate in Cargo.lock exactly.

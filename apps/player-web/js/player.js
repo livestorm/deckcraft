@@ -4,7 +4,7 @@
 //   const p = new DeckcraftPlayer(container, { base: '/deckcraft/0.1.0/', fonts: [...] })
 // `base` holds worker.js, deckcraft_player.js and deckcraft_player_bg.wasm. When a bundler gives
 // them their own (hashed) URLs, pass those instead: { workerUrl, glueUrl, wasmUrl, fonts }.
-// `fontsBase` is a font server (entropy's packages/fonts CDN): each deck then downloads just the
+// `fontsBase` is a font server (a Google Fonts mirror): each deck then downloads just the
 // fonts it uses, before its first slide is drawn. `fonts` are added up front either way.
 //   await p.open(url)
 //   p.advance(p.nextOf(p.position)) // a click

@@ -122,7 +122,7 @@ const gpu = {
 }
 
 // Fonts on demand: with `fontsBase`, a deck's fonts come from a font server laid out as
-// <fontsBase>families/<key>/family.json plus the faces it lists (entropy's packages/fonts).
+// <fontsBase>families/<key>/family.json plus the faces it lists (see the npm README).
 // A family's folder: its name lowercased, spaces as hyphens, as one URL segment. The name comes
 // from the deck, so it is encoded: '../x' or '?' can't point a fetch outside the font folders.
 // '' for a name that is only dots or space, which is never fetched.

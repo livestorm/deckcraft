@@ -74,7 +74,7 @@ allowed: our UI, our/Lucide icons, OFL fonts, and decks built only from allowed 
   `../craft-fonts`).
 - **Exception, the browser player** (`apps/player-web`; decided by Lachlan Laycock, 2026-10-23):
   it compiles in no craft-fonts faces (`CRAFT_FONTS_EMBED=none`) and fetches each deck's fonts at
-  runtime from Livestorm's Google Fonts mirror (entropy's `packages/fonts`). Google Fonts are
+  runtime from a font server, a Google Fonts mirror (the `fontsBase` option). Google Fonts are
   openly licensed (OFL, Apache, Ubuntu Font Licence), which §1.2 allows; nothing from the mirror
   is committed or bundled. `ATTRIBUTION.md` says so. §1.1 still holds at runtime: the player never
   fetches Adobe's Source families or Noto CJK, even when a deck names them

@@ -1132,7 +1132,7 @@ fn shape_item(
 }
 
 /// Is `family` a symbol font (characters at U+F000 + code)?
-fn is_symbol_font(family: &str) -> bool {
+pub fn is_symbol_font(family: &str) -> bool {
     let f = family.to_ascii_lowercase();
     f.starts_with("wingdings") || f == "symbol" || f.starts_with("webdings") || f.starts_with("marlett")
 }

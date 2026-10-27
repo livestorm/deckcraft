@@ -10,7 +10,7 @@ use crate::xml::{A, W};
 
 fn font_set(w: &mut W, tag: &str, f: &FontSet) {
     w.open0(tag);
-    w.empty("a:latin", A::new().a("typeface", if f.latin.is_empty() { "Arial" } else { &f.latin }));
+    dml::latin(w, if f.latin.is_empty() { "Arial" } else { &f.latin }, f.latin_hint.as_ref());
     w.empty("a:ea", A::new().a("typeface", &f.ea));
     w.empty("a:cs", A::new().a("typeface", &f.cs));
     for sf in &f.scripts {

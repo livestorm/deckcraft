@@ -17,7 +17,7 @@ fn font_set(e: Option<&El>) -> FontSet {
                 .collect()
         })
         .unwrap_or_default();
-    FontSet { latin: tf("latin"), ea: tf("ea"), cs: tf("cs"), scripts }
+    FontSet { latin: tf("latin"), latin_hint: e.and_then(|e| e.child("latin")).and_then(super::font_hint), ea: tf("ea"), cs: tf("cs"), scripts }
 }
 
 pub fn read_theme(imp: &mut Imp, part: &Part, root: &El) -> Theme {

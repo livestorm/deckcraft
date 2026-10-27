@@ -10,6 +10,7 @@
 
 mod fallback;
 mod fontdb;
+pub mod request;
 pub mod script;
 mod shape;
 
@@ -168,8 +169,29 @@ pub fn first_glyph(face: &FontFace, chars: &[char]) -> u32 {
 }
 
 #[cfg(test)]
+#[path = "../embed_rules.rs"]
+mod embed_rules;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_each_build_embeds() {
+        use embed_rules::embeds;
+        // Native builds embed every craft-fonts face (Adobe's families are excluded elsewhere).
+        assert!(embeds("Carlito", "Regular", false, None));
+        assert!(embeds("BIZ UDPGothic", "Bold", false, None));
+        // Web builds (the editor) keep Inter and BIZ UDPGothic Regular to stay small.
+        assert!(embeds("Inter", "Regular", true, None));
+        assert!(embeds("BIZ UDPGothic", "Regular", true, None));
+        assert!(!embeds("Carlito", "Regular", true, None));
+        // CRAFT_FONTS_EMBED=none (the browser player): nothing, it fetches each deck's fonts.
+        assert!(!embeds("Inter", "Regular", true, Some("none")));
+        assert!(!embeds("Carlito", "Regular", false, Some("none")));
+        // Any other value changes nothing.
+        assert!(embeds("Inter", "Regular", true, Some("")));
+    }
 
     fn any_face() -> std::sync::Arc<FontFace> {
         FontDb::global().face(DEFAULT_FAMILY, "Regular")
@@ -204,6 +226,19 @@ mod tests {
         let f = fontdb::last_resort_face();
         assert_eq!(f.family, fontdb::LAST_RESORT_FAMILY);
         assert!(f.upem > 0.0);
+    }
+
+    #[test]
+    fn a_font_added_as_another_family_draws_that_family() {
+        // The player fetches Tinos for a missing serif "Old Foundry Serif", or Montserrat's 300
+        // face for "Montserrat Light", and adds it under the name the document uses.
+        let db = FontDb::with_font_dirs(Vec::new());
+        let Some(bytes) = bundled().last().map(|b| b.to_vec()) else { panic!("no bundled faces") };
+        assert!(!db.has_family("Old Foundry Serif"));
+        assert_eq!(db.add_font_as(bytes.clone(), "Old Foundry Serif"), 1);
+        assert!(db.has_family("Old Foundry Serif"));
+        assert_eq!(db.document_face("Old Foundry Serif", "Regular").family, "Old Foundry Serif");
+        assert_eq!(db.add_font_as(bytes, "old foundry serif"), 0, "the same face again adds nothing");
     }
 
     #[test]

@@ -3,7 +3,7 @@
 use deckcraft_geom::{Xfrm, pt_to_emu};
 use deckcraft_model::style::{ColorBase, ColorRef, Compound, Dash, Effects, Fill, GradientShape, Line, LineCap, LineJoin, PictureFill, PictureMode};
 use deckcraft_model::text::{
-    Action, AutoFit, BodyProps, Bullet, Caps, Hyperlink, ListStyle, ParaProps, Paragraph, RunKind, RunProps, Spacing, Strike, TextBody,
+    Action, AutoFit, BodyProps, Bullet, Caps, FontHint, Hyperlink, ListStyle, ParaProps, Paragraph, RunKind, RunProps, Spacing, Strike, TextBody,
 };
 
 use super::{Exp, Out};
@@ -606,6 +606,15 @@ fn typeface(w: &mut W, tag: &str, f: &Option<String>) {
     }
 }
 
+/// `a:latin`, with its `panose` and `pitchFamily` when the hint is for this typeface.
+pub fn latin(w: &mut W, typeface: &str, hint: Option<&FontHint>) {
+    let hint = FontHint::for_typeface(hint, typeface);
+    w.empty(
+        "a:latin",
+        A::new().a("typeface", typeface).o("panose", hint.and_then(|h| h.panose.clone())).o("pitchFamily", hint.and_then(|h| h.pitch_family)),
+    );
+}
+
 /// `a:rPr`, `a:defRPr`, `a:endParaRPr`.
 pub fn rpr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, r: &RunProps) {
     let a = A::new()
@@ -684,7 +693,9 @@ pub fn rpr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, r: &RunProps) {
         solid(w, c);
         w.close("a:uFill");
     }
-    typeface(w, "a:latin", &r.font);
+    if let Some(f) = &r.font {
+        latin(w, f, r.font_hint.as_ref());
+    }
     typeface(w, "a:ea", &r.font_ea);
     typeface(w, "a:cs", &r.font_cs);
     typeface(w, "a:sym", &r.font_sym);

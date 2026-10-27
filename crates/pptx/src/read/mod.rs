@@ -736,6 +736,13 @@ fn byte_attr(el: &El, name: &str) -> Option<u8> {
     u8::try_from(el.u32(name)?).ok()
 }
 
+/// `panose` and `pitchFamily` on an `a:latin` with a typeface, when either is there.
+fn font_hint(el: &El) -> Option<deckcraft_model::text::FontHint> {
+    let typeface = el.attr("typeface").filter(|t| !t.is_empty())?;
+    let (panose, pitch_family) = (panose_attr(el), byte_attr(el, "pitchFamily"));
+    (panose.is_some() || pitch_family.is_some()).then(|| deckcraft_model::text::FontHint { typeface: typeface.to_string(), panose, pitch_family })
+}
+
 /// `panose` is 20 hex digits (ST_Panose). Anything else is dropped.
 fn panose_attr(el: &El) -> Option<String> {
     let v = el.attr("panose")?.trim();

@@ -169,6 +169,7 @@ export class DeckcraftPlayer {
       el.preload = 'auto'
       el.playsInline = true
       el.volume = Math.min(1, Math.max(0, c.volume ?? 1))
+      el.loop = !!c.loop
       el.controls = this.controls
       const [x, y, w, h] = c.rect
       el.style.cssText = `position:absolute;left:${x * 100}%;top:${y * 100}%;width:${w * 100}%;height:${h * 100}%;object-fit:contain;display:none;pointer-events:${this.controls ? 'auto' : 'none'}`

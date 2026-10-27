@@ -159,6 +159,7 @@ impl WebPlayer {
             let rect: Array = m.rect.iter().map(|v| JsValue::from_f64(*v)).collect();
             set(&o, "rect", rect)?;
             set(&o, "volume", m.volume)?;
+            set(&o, "loop", m.loop_play)?;
             set(&o, "trimStartMs", m.trim_start_ms)?;
             set(&o, "trimEndMs", m.trim_end_ms)?;
             out.push(&o);

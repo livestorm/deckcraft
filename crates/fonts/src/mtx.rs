@@ -538,10 +538,12 @@ fn rebuild(tables: &[u8], push: &[u8], code: &[u8]) -> Option<Vec<u8>> {
     let mut out_tables: Vec<([u8; 4], Vec<u8>)> = Vec::with_capacity(count);
     // Directory entries may share bytes, so the font is bounded as a whole, not table by table.
     let mut size = 12 + 16 * count;
+    let cvt_table = table(b"cvt ").map(cvt).unwrap_or_else(|| Some(vec![]))?;
     for (tag, data) in &dir {
         let len = match tag {
             b"loca" => loca.len(),
             b"glyf" => glyf.len(),
+            b"cvt " => cvt_table.len(),
             _ => data.len(),
         };
         size += len.next_multiple_of(4);
@@ -551,7 +553,7 @@ fn rebuild(tables: &[u8], push: &[u8], code: &[u8]) -> Option<Vec<u8>> {
         let data = match tag {
             b"loca" => loca.clone(),
             b"glyf" => glyf.clone(),
-            b"cvt " => cvt(data)?,
+            b"cvt " => cvt_table.clone(),
             // shortcut: the device-metric tables are dropped, nothing here reads them.
             b"hdmx" | b"VDMX" => continue,
             b"head" => {
@@ -1185,10 +1187,39 @@ mod tests {
         out
     }
 
+    /// A `cvt ` table of 65535 one-byte values, which decodes to twice that.
+    fn cvt_directory(copies: usize) -> Vec<u8> {
+        let mut cvt = 65535u16.to_be_bytes().to_vec();
+        cvt.resize(2 + 65535, 0);
+        let mut entries = vec![(*b"glyf", 0, 0), (*b"head", 0, 54), (*b"loca", 0, 0), (*b"maxp", 0, 32)];
+        entries.extend((0..copies).map(|_| (*b"cvt ", 1, cvt.len())));
+        let mut ctf = vec![0, 1, 0, 0];
+        ctf.extend((entries.len() as u16).to_be_bytes());
+        ctf.extend([0; 6]);
+        let body = 12 + 16 * entries.len();
+        for (tag, at, l) in &entries {
+            ctf.extend(tag);
+            ctf.extend([0; 4]);
+            ctf.extend(((body + at * 100) as u32).to_be_bytes());
+            ctf.extend((*l as u32).to_be_bytes());
+        }
+        ctf.resize(body + 100, 0);
+        ctf.extend(&cvt);
+        let (a, b) = (pack(&ctf, Some(7)), pack(&[], None));
+        let mut out = vec![3, 0, 0, 0];
+        out.extend(&((10 + a.len()) as u32).to_be_bytes()[1..]);
+        out.extend(&((10 + a.len() + b.len()) as u32).to_be_bytes()[1..]);
+        out.extend([a, b.clone(), b].concat());
+        out
+    }
+
     /// Directory entries that share one range cannot add up to more than the size limit.
     #[test]
     fn the_rebuilt_font_is_bounded_as_a_whole() {
         assert!(decompress(&shared_ranges(3, 1 << 20)).is_some());
         assert!(decompress(&shared_ranges(70, 1 << 20)).is_none());
+        // A table that grows when decoded is charged at its decoded size.
+        assert!(decompress(&cvt_directory(3)).is_some());
+        assert!(decompress(&cvt_directory(1000)).is_none());
     }
 }

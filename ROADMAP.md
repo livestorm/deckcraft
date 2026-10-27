@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-23 · **Change:** minor (the browser player fetches each deck's fonts instead of compiling them in; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-27 · **Change:** minor (media volume, loop and hiding round-trip in PPTX; the player starts a slide's automatic media on open and on jumps; previous: minor, the browser player fetches each deck's fonts instead of compiling them in; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft aims at full PowerPoint parity, and to be better: faster, open (a documented zip+JSON
 format plus PPTX), scriptable by agents (CLI, JSON control channel, MCP), and available everywhere
@@ -131,6 +131,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-27 | Media: a clip's volume, Loop until Stopped and Hide While Not Playing are read from and written to PPTX (`p:cMediaNode`, part of #74). The browser player starts the media of a slide's automatic first step when the deck opens or a jump lands on the slide (a waiting screen's background music was silent), and loops clips |
 | 2026-10-23 | The browser player compiles in no fonts but a last-resort face and fetches each deck's fonts from Livestorm's Google Fonts mirror: the family itself in the weights used ("Montserrat Light"), its metric-compatible stand-in (Carlito, Caladea, Arimo, Tinos, Cousine, Inter), else a sans, serif or monospace face chosen from the file's `pitchFamily`/`panose`, plus a face for Japanese, Chinese, Korean, Arabic, Hebrew, Thai or Devanagari text. wasm 4.3 → 1.6 MB with brotli, npm package 9.5 → 2.2 MB; `panose` and `pitchFamily` now round-trip on run and theme fonts |
 | 2026-10-18 | Native chart sidecar bytes move from JSON arrays into referenced ZIP entries, with shared media byte/item limits and bounded reads; older inline sidecars still load. Synthetic format regressions cover large workbooks and malformed members |
 | 2026-10-17 | Opening a file caps absurd effect sizes (glow, soft edges, shadows, reflections, on shapes, text and table text) at what Format Shape allows: a glow of 10^18 pt in a .pptx made rendering ask for 34 GB and abort |
@@ -240,6 +241,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-27 | minor | Progress log: media playback options in PPTX and automatic media in the player |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-15 | trivial | Progress log: chart package parts survive a native save. Scores and milestone names unchanged |
 | 2026-10-15 | trivial | Progress log: PPTX trigger click-step round trip. Feature scores and milestone names unchanged |

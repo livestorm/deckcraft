@@ -241,3 +241,93 @@ mod font_requests {
         }
     }
 }
+
+mod automatic_media {
+    use deckcraft_model::anim::{AnimClass, AnimStart, Animation};
+    use deckcraft_model::{MediaClip, ShapeKind};
+
+    use super::*;
+
+    /// Two slides, one of which (`music_on`) plays looping music as soon as it starts: an
+    /// automatic first step, as PowerPoint's "Start: Automatically" writes it.
+    fn deck(music_on: usize) -> (Player, ShapeId) {
+        let mut p = deckcraft_model::defaults::new_presentation(None);
+        let layout = p.slides[0].layout;
+        let second = deckcraft_model::defaults::new_slide(&mut p, layout).expect("slide");
+        p.slides.push(Arc::new(second));
+        let audio = p.add_media("music.mp3", "audio/mpeg", b"mp3-bytes-deckcraft".to_vec()).expect("media");
+        let id = ShapeId(p.alloc_id().expect("id"));
+        let music = deckcraft_model::Shape {
+            id,
+            name: "Music".into(),
+            xfrm: Some(deckcraft_geom::Xfrm::new(32.0, 480.0, 32.0, 32.0)),
+            kind: ShapeKind::Media(MediaClip { media: audio, video: false, volume: 0.25, loop_play: true, ..Default::default() }),
+            ..Default::default()
+        };
+        let slide = Arc::make_mut(&mut p.slides[music_on]);
+        slide.shapes.push(music);
+        slide.animations.push(Animation {
+            shape: id,
+            class: AnimClass::Media,
+            effect: "play".into(),
+            start: AnimStart::AfterPrevious,
+            duration_ms: 138_448,
+            ..Default::default()
+        });
+        let mut player = Player::open(&deckcraft_pptx::export(&p).expect("export")).expect("open");
+        player.resize(160);
+        (player, id)
+    }
+
+    fn play(shape: ShapeId) -> Vec<Cue> {
+        vec![Cue { shape, action: "play".into() }]
+    }
+
+    /// Every cue of the next few seconds of frames from `now`.
+    fn cues_from(p: &mut Player, now: f64) -> Vec<Cue> {
+        (0..40).flat_map(|i| p.frame(now + f64::from(i) * 0.1).cues).collect()
+    }
+
+    #[test]
+    fn opening_the_deck_starts_its_automatic_music_once() {
+        let (mut p, music) = deck(0);
+        assert_eq!(p.position(), Pos { slide: 0, step: 1 }, "entered past the automatic step");
+        assert_eq!(p.frame(0.0).cues, play(music));
+        assert!(cues_from(&mut p, 0.1).is_empty(), "once");
+    }
+
+    #[test]
+    fn jumping_onto_the_slide_starts_it_and_a_jump_within_it_does_not() {
+        let (mut p, music) = deck(0);
+        p.frame(0.0);
+        p.jump(Pos { slide: 1, step: 0 });
+        assert!(cues_from(&mut p, 1.0).is_empty());
+        p.jump(p.entry(0));
+        assert_eq!(cues_from(&mut p, 10.0), play(music), "a late joiner or a jump back hears it");
+        p.jump(p.entry(0));
+        assert!(cues_from(&mut p, 20.0).is_empty(), "a jump within the slide doesn't restart it");
+    }
+
+    #[test]
+    fn clicking_into_the_slide_starts_it_exactly_once() {
+        let (mut p, music) = deck(1);
+        assert!(cues_from(&mut p, 0.0).is_empty(), "the first slide has no music");
+        let next = p.next_of(p.position()).expect("a next slide");
+        p.advance(next, 10.0);
+        assert_eq!(cues_from(&mut p, 10.0), play(music));
+    }
+
+    #[test]
+    fn a_deck_without_automatic_media_sends_no_cues_on_open() {
+        let mut p = sample();
+        assert!(p.frame(0.0).cues.is_empty());
+    }
+
+    #[test]
+    fn clips_carry_loop_and_volume() {
+        let (p, music) = deck(0);
+        let clip = p.media().into_iter().find(|m| m.shape == music).expect("the music clip");
+        assert!(clip.loop_play);
+        assert!((clip.volume - 0.25).abs() < 1e-9);
+    }
+}

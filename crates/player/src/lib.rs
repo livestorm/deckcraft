@@ -76,6 +76,8 @@ pub struct MediaClip {
     /// Box on the slide as fractions of the slide's width and height: `[x, y, w, h]`.
     pub rect: [f64; 4],
     pub volume: f64,
+    /// Loop until Stopped.
+    pub loop_play: bool,
     pub trim_start_ms: u32,
     pub trim_end_ms: u32,
 }
@@ -168,6 +170,9 @@ pub struct Player {
     shown: Option<(Pos, u32, u32)>,
     warnings: Vec<String>,
     gpu_transitions: bool,
+    /// The slide was entered at rest (opened, or jumped onto from another slide): the next frame
+    /// starts the media its automatic first step starts, which entering past that step skipped.
+    entry_media: bool,
 }
 
 impl Player {
@@ -196,6 +201,7 @@ impl Player {
             shown: None,
             warnings,
             gpu_transitions: false,
+            entry_media: true,
         };
         player.resize(1280);
         player.pos = player.entry(first);
@@ -304,6 +310,7 @@ impl Player {
         let pos = self.clamp(pos);
         self.step = None;
         self.transition = None;
+        self.entry_media |= pos.slide != self.pos.slide;
         self.pos = pos;
     }
 
@@ -331,6 +338,11 @@ impl Player {
     /// The picture at `now`, and the media cues reached since the last call.
     pub fn frame(&mut self, now: f64) -> Tick {
         let mut cues = Vec::new();
+        if std::mem::take(&mut self.entry_media) && self.pos.step > 0 && self.auto_first(self.pos.slide) {
+            // Music that starts with the slide (a waiting screen's) plays for whoever arrives on
+            // it, though the slide's automatic step itself is shown as done.
+            cues = self.cues(self.pos.slide, 0, f64::NEG_INFINITY, f64::INFINITY);
+        }
         if let Some(tr) = &self.transition {
             let p = progress(now, tr.start, tr.duration);
             if p < 1.0 {
@@ -389,6 +401,7 @@ impl Player {
                     link: item.link.clone(),
                     rect: [r.x0 / sw, r.y0 / sh, r.width() / sw, r.height() / sh],
                     volume: clip.volume,
+                    loop_play: clip.loop_play,
                     trim_start_ms: clip.trim_start_ms,
                     trim_end_ms: clip.trim_end_ms,
                 });

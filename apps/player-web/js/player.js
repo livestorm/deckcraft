@@ -14,6 +14,18 @@
 // fonts({loaded: [{family, from}], missing: [family]}) with fontsBase,
 // mediaAction({shape, action, at}) when someone with controls plays or pauses a clip themselves.
 
+// What a clip does at `time` seconds of `duration`: null to carry on, else `{seek}` (back to its
+// trim start, looping) or `{stop}`. Untrimmed clips are left to the media element and its own
+// loop. A trimmed clip ends at `duration - trimEndMs`, and loops from `trimStartMs`: the element's
+// own loop would replay the part trimmed off the start.
+export function trimStep ({ trimStartMs = 0, trimEndMs = 0, loop = false }, time, duration) {
+  if ((!trimStartMs && !trimEndMs) || !Number.isFinite(duration)) return null
+  const start = trimStartMs / 1000
+  const end = Math.max(start, duration - trimEndMs / 1000)
+  if (time < end) return null
+  return loop ? { seek: start } : { stop: true }
+}
+
 export class DeckcraftPlayer {
   constructor (container, { base = '', workerUrl, glueUrl, wasmUrl, fonts = [], fontsBase = null, controls = false } = {}) {
     this.container = container
@@ -175,11 +187,21 @@ export class DeckcraftPlayer {
       el.preload = 'auto'
       el.playsInline = true
       el.volume = Math.min(1, Math.max(0, c.volume ?? 1))
+      el.loop = !!c.loop && !c.trimStartMs && !c.trimEndMs
       el.controls = this.controls
       const [x, y, w, h] = c.rect
       el.style.cssText = `position:absolute;left:${x * 100}%;top:${y * 100}%;width:${w * 100}%;height:${h * 100}%;object-fit:contain;display:none;pointer-events:${this.controls ? 'auto' : 'none'}`
       if (!c.video) el.style.height = 'auto'
       const clip = { ...c, el, data: undefined, quiet: 0 }
+      const trim = () => {
+        const step = trimStep(c, el.currentTime, el.duration)
+        if (!step) return
+        if (step.stop) return this.pause(clip)
+        el.currentTime = step.seek
+        if (el.paused) this.play(clip)
+      }
+      el.addEventListener('timeupdate', trim)
+      el.addEventListener('ended', trim)
       if (this.controls) {
         const report = action => () => {
           if (clip.quiet > 0) clip.quiet -= 1

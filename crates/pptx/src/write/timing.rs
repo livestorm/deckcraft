@@ -569,6 +569,73 @@ fn para_count(s: &Shape) -> u32 {
     s.text.as_ref().map(|t| t.paragraphs.iter().filter(|p| !p.is_empty()).count()).unwrap_or(0).min(10_000) as u32
 }
 
+/// Whether a slide's timing has anything to write: animations, or a clip with playback options.
+pub fn has_timing(anims: &[Animation], shapes: &[Shape]) -> bool {
+    fn options(shapes: &[Shape], depth: usize) -> bool {
+        depth <= 64
+            && shapes.iter().any(|s| match &s.kind {
+                ShapeKind::Media(m) => has_options(m),
+                ShapeKind::Group { children, .. } => options(children, depth + 1),
+                _ => false,
+            })
+    }
+    !anims.is_empty() || options(shapes, 0)
+}
+
+/// Volume, Loop until Stopped or Hide While Not Playing set: PowerPoint keeps them in the timing.
+fn has_options(m: &deckcraft_model::MediaClip) -> bool {
+    m.volume < 1.0 || m.loop_play || m.hide_while_not_playing
+}
+
+/// The clips with playback options, with their file ids, in document order.
+fn media_options<'a>(shapes: &'a [Shape], idmap: &IdMap) -> Vec<(&'a deckcraft_model::MediaClip, u32)> {
+    fn rec<'a>(shapes: &'a [Shape], idmap: &IdMap, depth: usize, out: &mut Vec<(&'a deckcraft_model::MediaClip, u32)>) {
+        if depth > 64 {
+            return;
+        }
+        for s in shapes {
+            match &s.kind {
+                ShapeKind::Media(m) if has_options(m) => {
+                    if let Some(spid) = idmap.get(s.id) {
+                        out.push((m, spid));
+                    }
+                }
+                ShapeKind::Group { children, .. } => rec(children, idmap, depth + 1, out),
+                _ => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    rec(shapes, idmap, 0, &mut out);
+    out
+}
+
+/// `p:audio` / `p:video` with its `p:cMediaNode`: volume (100000 = 100%), Loop until Stopped
+/// (`repeatCount="indefinite"`), Hide While Not Playing (`showWhenStopped="0"`).
+fn media_node(w: &mut W, ids: &mut Ids, m: &deckcraft_model::MediaClip, spid: u32) {
+    let tag = if m.video { "p:video" } else { "p:audio" };
+    let vol = (m.volume < 1.0).then(|| (m.volume.clamp(0.0, 1.0) * 100_000.0).round() as u32);
+    w.open0(tag);
+    w.open("p:cMediaNode", A::new().o("vol", vol).o("showWhenStopped", m.hide_while_not_playing.then_some("0")));
+    w.open(
+        "p:cTn",
+        A::new()
+            .a("id", ids.next())
+            .o("repeatCount", m.loop_play.then_some("indefinite"))
+            .a("fill", "hold")
+            .o("display", m.hide_while_not_playing.then_some("0")),
+    );
+    w.open0("p:stCondLst");
+    w.empty("p:cond", A::new().a("delay", "indefinite"));
+    w.close("p:stCondLst");
+    w.close("p:cTn");
+    w.open0("p:tgtEl");
+    w.empty("p:spTgt", A::new().a("spid", spid));
+    w.close("p:tgtEl");
+    w.close("p:cMediaNode");
+    w.close(tag);
+}
+
 /// Write `p:timing` for a slide's animations.
 pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idmap: &IdMap) {
     let mut grp_count: std::collections::HashMap<u32, u32> = Default::default();
@@ -621,7 +688,8 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
             None => main.extend(effs),
         }
     }
-    if main.is_empty() && triggered.is_empty() {
+    let media = media_options(shapes, idmap);
+    if main.is_empty() && triggered.is_empty() && media.is_empty() {
         return;
     }
     let mut ids = Ids(0);
@@ -691,6 +759,9 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         trig_cond(w);
         w.close("p:nextCondLst");
         w.close("p:seq");
+    }
+    for (m, spid) in &media {
+        media_node(w, &mut ids, m, *spid);
     }
     w.close("p:childTnLst");
     w.close("p:cTn");

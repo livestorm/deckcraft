@@ -27,6 +27,7 @@ pub fn decompress(mtx: &[u8]) -> Option<Vec<u8>> {
     rebuild(&tables, &push, &code)
 }
 
+/// A big-endian unsigned integer of up to eight bytes.
 fn u24(b: &[u8]) -> usize {
     b.iter().fold(0, |v, &x| v << 8 | x as usize)
 }
@@ -38,20 +39,25 @@ struct Cur<'a> {
 }
 
 impl<'a> Cur<'a> {
+    /// A reader at the start of `d`.
     fn new(d: &'a [u8]) -> Self {
         Cur { d, p: 0 }
     }
+    /// The next `n` bytes, or none if fewer are left.
     fn take(&mut self, n: usize) -> Option<&'a [u8]> {
         let s = self.d.get(self.p..self.p.checked_add(n)?)?;
         self.p += n;
         Some(s)
     }
+    /// The next byte.
     fn u8(&mut self) -> Option<u8> {
         self.take(1).map(|b| b[0])
     }
+    /// The next unsigned 16-bit value.
     fn u16(&mut self) -> Option<u16> {
         self.take(2).map(|b| u16::from_be_bytes([b[0], b[1]]))
     }
+    /// The next signed 16-bit value.
     fn i16(&mut self) -> Option<i16> {
         self.u16().map(|v| v as i16)
     }
@@ -91,12 +97,14 @@ struct Bits<'a> {
 }
 
 impl Bits<'_> {
+    /// The next bit, most significant first, or none at the end of the data.
     fn bit(&mut self) -> Option<usize> {
         let byte = *self.d.get(self.pos >> 3)?;
         let bit = (byte >> (7 - (self.pos & 7))) & 1;
         self.pos += 1;
         Some(bit as usize)
     }
+    /// The next `n` bits as a number.
     fn value(&mut self, n: u32) -> Option<usize> {
         (0..n).try_fold(0, |v, _| Some(v << 1 | self.bit()?))
     }
@@ -120,6 +128,7 @@ struct Ahuff {
 }
 
 impl Ahuff {
+    /// The code for `range` symbols in the state the format starts every stream in.
     fn new(range: usize) -> Self {
         let mut tree = vec![Node { code: -1, ..Node::default() }; 2 * range];
         for (i, n) in tree.iter_mut().enumerate().skip(2) {
@@ -157,6 +166,7 @@ impl Ahuff {
         t
     }
 
+    /// Exchanges two nodes of equal weight, with their subtrees.
     fn swap(&mut self, a: usize, b: usize) {
         let (upa, upb) = (self.tree[a].up, self.tree[b].up);
         self.tree.swap(a, b);
@@ -193,6 +203,7 @@ impl Ahuff {
         self.tree[1].weight += 1;
     }
 
+    /// Decodes one symbol and counts it.
     fn read(&mut self, bits: &mut Bits) -> Option<usize> {
         let mut a = 1;
         // A tree over at most 512 symbols is never deeper than that.
@@ -253,6 +264,10 @@ fn unpack(data: &[u8], version: u8) -> Option<Vec<u8>> {
                 if code & 4 == 0 {
                     break;
                 }
+                // No copy is longer than the stream, which also keeps the shift from overflowing.
+                if length > out_len {
+                    return None;
+                }
                 code = len.read(&mut bits)?;
             }
             length += 2;
@@ -312,6 +327,7 @@ struct Triplet {
     y_neg: bool,
 }
 
+/// The coordinate step a flag byte's low seven bits stand for.
 fn triplet(index: u8) -> Triplet {
     let i = index as i32;
     let sign = |n: i32| (n & 1 == 0, n & 2 == 0);
@@ -481,6 +497,7 @@ fn cvt(d: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// The sum of the table's big-endian 32-bit words, as the table directory holds it.
 fn checksum(d: &[u8]) -> u32 {
     d.chunks(4).fold(0u32, |s, c| {
         let mut w = [0; 4];
@@ -519,7 +536,18 @@ fn rebuild(tables: &[u8], push: &[u8], code: &[u8]) -> Option<Vec<u8>> {
     loca.extend((glyf.len() as u32).to_be_bytes());
 
     let mut out_tables: Vec<([u8; 4], Vec<u8>)> = Vec::with_capacity(count);
+    // Directory entries may share bytes, so the font is bounded as a whole, not table by table.
+    let mut size = 12 + 16 * count;
     for (tag, data) in &dir {
+        let len = match tag {
+            b"loca" => loca.len(),
+            b"glyf" => glyf.len(),
+            _ => data.len(),
+        };
+        size += len.next_multiple_of(4);
+        if size > MAX_OUT {
+            return None;
+        }
         let data = match tag {
             b"loca" => loca.clone(),
             b"glyf" => glyf.clone(),
@@ -576,6 +604,7 @@ mod tests {
     }
 
     impl BitOut {
+        /// Appends one bit.
         fn bit(&mut self, b: usize) {
             if self.n.is_multiple_of(8) {
                 self.bytes.push(0);
@@ -584,12 +613,14 @@ mod tests {
             self.bytes[last] |= (b as u8) << (7 - self.n % 8);
             self.n += 1;
         }
+        /// Appends the low `bits` bits of `v`.
         fn value(&mut self, v: usize, bits: u32) {
             (0..bits).rev().for_each(|i| self.bit(v >> i & 1));
         }
     }
 
     impl Ahuff {
+        /// Appends the code for `sym` and counts it.
         fn write(&mut self, sym: usize, out: &mut BitOut) {
             let leaf = self.leaf[sym];
             let (mut a, mut path) = (leaf, vec![]);
@@ -696,13 +727,16 @@ mod tests {
 
     // ---- TrueType to CTF ----
 
+    /// A big-endian 16-bit value at `at`.
     fn be16(d: &[u8], at: usize) -> usize {
         u16::from_be_bytes([d[at], d[at + 1]]) as usize
     }
+    /// A big-endian 32-bit value at `at`.
     fn be32(d: &[u8], at: usize) -> usize {
         u32::from_be_bytes([d[at], d[at + 1], d[at + 2], d[at + 3]]) as usize
     }
 
+    /// The font's tables by tag.
     fn tables(font: &[u8]) -> Vec<([u8; 4], &[u8])> {
         (0..be16(font, 4))
             .map(|i| {
@@ -712,6 +746,7 @@ mod tests {
             .collect()
     }
 
+    /// Appends `v` as a `255USHORT`.
     fn put255ushort(out: &mut Vec<u8>, v: usize) {
         match v {
             0..=252 => out.push(v as u8),
@@ -721,6 +756,7 @@ mod tests {
         }
     }
 
+    /// Appends `v` as a `255SHORT`.
     fn put255short(out: &mut Vec<u8>, v: i16) {
         let m = v.unsigned_abs() as usize;
         if m >= 756 {
@@ -1006,6 +1042,7 @@ mod tests {
         }
     }
 
+    /// Every glyph's outline as a string, in glyph order.
     fn outlines(font: &[u8]) -> Vec<String> {
         let f = skrifa::FontRef::new(font).unwrap();
         let glyphs = f.outline_glyphs();
@@ -1040,6 +1077,7 @@ mod tests {
 
     const FONT: &[u8] = epaint_default_fonts::UBUNTU_LIGHT;
 
+    /// A font through MTX and back keeps its outlines and glyph programs.
     #[test]
     fn a_compressed_embedded_font_decodes_to_the_same_glyphs() {
         let original = outlines(FONT);
@@ -1056,6 +1094,7 @@ mod tests {
         }
     }
 
+    /// Tables other than the translated ones come through unchanged.
     #[test]
     fn the_other_tables_survive() {
         let font = decompress(&to_mtx(FONT, None)).unwrap();
@@ -1070,6 +1109,7 @@ mod tests {
         }
     }
 
+    /// Hop codes repeat the value two back.
     #[test]
     fn push_data_expands_hop_codes() {
         // A,x1,A,x2,A and A,x1,A,x2,A,x3,A, after a lone 7.
@@ -1080,6 +1120,7 @@ mod tests {
         assert!(push_data(&mut Cur::new(&[251, 1]), 3).is_none());
     }
 
+    /// `255SHORT` and `255USHORT` read every form they are written in.
     #[test]
     fn short_numbers_use_every_form() {
         let mut out = vec![];
@@ -1094,6 +1135,7 @@ mod tests {
         assert!(longs.iter().all(|&v| c.ushort255() == Some(v as u16)));
     }
 
+    /// `cvt` steps add up to the table's values.
     #[test]
     fn cvt_values_decode_as_running_sums() {
         // 5; then +1000 (two bytes); then -3000 (a word); then -238 (two bytes).
@@ -1102,6 +1144,7 @@ mod tests {
         assert_eq!(v, [5, 1005, -1995, -2233]);
     }
 
+    /// Cut-off and corrupted data is refused.
     #[test]
     fn broken_input_is_refused_without_panicking() {
         let mtx = to_mtx(FONT, None);
@@ -1117,5 +1160,35 @@ mod tests {
         assert!(decompress(&[]).is_none());
         assert!(decompress(&[9; 40]).is_none());
         assert!(decompress(&[3; 10]).is_none());
+    }
+
+    /// An MTX font whose directory lists one `len`-byte range `copies` times.
+    fn shared_ranges(copies: usize, len: usize) -> Vec<u8> {
+        let mut entries: Vec<([u8; 4], usize)> = vec![(*b"glyf", 0), (*b"head", 54), (*b"loca", 0), (*b"maxp", 32)];
+        entries.extend((0..copies).map(|_| (*b"zz\0\0", len)));
+        let mut ctf = vec![0, 1, 0, 0];
+        ctf.extend((entries.len() as u16).to_be_bytes());
+        ctf.extend([0; 6]);
+        let body = 12 + 16 * entries.len();
+        for (tag, l) in &entries {
+            ctf.extend(tag);
+            ctf.extend([0; 4]);
+            ctf.extend(((if *tag == *b"zz\0\0" { body + 100 } else { body }) as u32).to_be_bytes());
+            ctf.extend((*l as u32).to_be_bytes());
+        }
+        ctf.resize(body + 100 + len, 0);
+        let (a, b) = (pack(&ctf, Some(7)), pack(&[], None));
+        let mut out = vec![3, 0, 0, 0];
+        out.extend(&((10 + a.len()) as u32).to_be_bytes()[1..]);
+        out.extend(&((10 + a.len() + b.len()) as u32).to_be_bytes()[1..]);
+        out.extend([a, b.clone(), b].concat());
+        out
+    }
+
+    /// Directory entries that share one range cannot add up to more than the size limit.
+    #[test]
+    fn the_rebuilt_font_is_bounded_as_a_whole() {
+        assert!(decompress(&shared_ranges(3, 1 << 20)).is_some());
+        assert!(decompress(&shared_ranges(70, 1 << 20)).is_none());
     }
 }

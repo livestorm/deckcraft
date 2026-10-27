@@ -56,7 +56,8 @@ jobs:
         run: |
           npm pack --dry-run
           if [ "${{ github.event_name }}" = "push" ]; then
-            npm publish --provenance --access public
+            # Verbose so a rejected trusted-publishing (OIDC) exchange says why in the log.
+            npm publish --provenance --access public --loglevel verbose
           else
             npm publish --provenance --access public --dry-run
           fi

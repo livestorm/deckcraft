@@ -1,9 +1,9 @@
 #!/usr/bin/env sh
 # Build the browser player into OUT (default dist/player): the wasm module and its glue, the
 # worker and the page-side library. No fonts are compiled in or shipped beside it except the
-# last-resort face: each deck's fonts come from a font server (entropy's packages/fonts, the
-# `fontsBase` option). Needs: rustup target wasm32-unknown-unknown, wasm-bindgen-cli matching
-# Cargo.lock, and wasm-opt (binaryen) on PATH or in WASM_OPT.
+# last-resort face: each deck's fonts come from a font server (the `fontsBase` option).
+# Needs: rustup target wasm32-unknown-unknown, wasm-bindgen-cli matching Cargo.lock, and
+# wasm-opt (binaryen) on PATH or in WASM_OPT.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 OUT=${1:-$ROOT/dist/player}

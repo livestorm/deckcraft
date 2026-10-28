@@ -331,3 +331,73 @@ mod automatic_media {
         assert!((clip.volume - 0.25).abs() < 1e-9);
     }
 }
+
+mod speaker_notes {
+    use std::io::{Cursor, Read, Write};
+
+    use deckcraft_model::text::TextBody;
+
+    use super::*;
+
+    /// Four slides with notes, the third hidden, saved as .pptx (file ids 256 to 259).
+    fn original() -> Vec<u8> {
+        let mut p = deckcraft_model::defaults::new_presentation(None);
+        let layout = p.slides[0].layout;
+        for _ in 0..3 {
+            let s = deckcraft_model::defaults::new_slide(&mut p, layout).expect("slide");
+            p.slides.push(Arc::new(s));
+        }
+        for (k, slide) in p.slides.iter_mut().enumerate() {
+            let s = Arc::make_mut(slide);
+            s.notes = TextBody::from_text(&format!("Notes of slide {}", k + 1));
+            s.hidden = k == 2;
+        }
+        deckcraft_pptx::export(&p).expect("export")
+    }
+
+    /// `bytes` with the slide whose file id is `drop` left out of the slide list, as the attendee
+    /// copy leaves out hidden slides.
+    fn without_slide(bytes: &[u8], drop: u32) -> Vec<u8> {
+        let mut z = zip::ZipArchive::new(Cursor::new(bytes)).expect("zip");
+        let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let o = zip::write::SimpleFileOptions::default();
+        for i in 0..z.len() {
+            let mut f = z.by_index(i).expect("entry");
+            let name = f.name().to_string();
+            let mut d = vec![];
+            f.read_to_end(&mut d).expect("read");
+            if name == "ppt/presentation.xml" {
+                let xml = String::from_utf8(d).expect("utf8");
+                let start = xml.find(&format!(r#"<p:sldId id="{drop}""#)).expect("the slide");
+                let end = start + xml[start..].find("/>").expect("its end") + 2;
+                d = format!("{}{}", &xml[..start], &xml[end..]).into_bytes();
+            }
+            out.start_file(name, o).expect("start");
+            out.write_all(&d).expect("write");
+        }
+        out.finish().expect("finish").into_inner()
+    }
+
+    #[test]
+    fn notes_of_gives_every_listed_slide_by_file_id() {
+        let notes = Player::notes_of(&original()).expect("notes");
+        let got: Vec<(u32, &str)> = notes.iter().map(|n| (n.file_id, n.notes.as_str())).collect();
+        assert_eq!(got, [(256, "Notes of slide 1"), (257, "Notes of slide 2"), (258, "Notes of slide 3"), (259, "Notes of slide 4")]);
+    }
+
+    #[test]
+    fn the_copy_names_the_same_slides_by_file_id_though_indexes_differ() {
+        let copy = Player::open(&without_slide(&original(), 258)).expect("open the copy");
+        let ids: Vec<(usize, Option<u32>)> = copy.slides().iter().map(|s| (s.index, s.file_id)).collect();
+        assert_eq!(ids, [(0, Some(256)), (1, Some(257)), (2, Some(259))]);
+        let notes = Player::notes_of(&original()).expect("notes");
+        let of = |id: Option<u32>| notes.iter().find(|n| Some(n.file_id) == id).map(|n| n.notes.as_str());
+        assert_eq!(of(copy.slides()[2].file_id), Some("Notes of slide 4"), "index 2 of the copy is the original's slide 4");
+        assert!(copy.slides().iter().all(|s| s.notes.is_empty() || s.file_id != Some(258)));
+    }
+
+    #[test]
+    fn notes_of_refuses_what_open_refuses() {
+        assert!(matches!(Player::notes_of(b"not a deck"), Err(OpenError::NotPptx)));
+    }
+}

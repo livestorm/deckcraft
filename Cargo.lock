@@ -1127,6 +1127,7 @@ dependencies = [
  "deckcraft-text",
  "image",
  "thiserror 2.0.21",
+ "zip",
 ]
 
 [[package]]

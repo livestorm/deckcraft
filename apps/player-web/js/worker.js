@@ -5,12 +5,15 @@
 //      {type: 'open', url} | {type: 'open', bytes: ArrayBuffer}
 //      {type: 'resize', width}
 //      {type: 'jump', slide, step} | {type: 'advance', slide, step}
+//      {type: 'notes', url} | {type: 'notes', bytes}: another deck's speaker notes, read without
+//        touching the deck on screen
 // Out: {type: 'initialized', loadMs}
 //      {type: 'fonts', loaded: [{family, from}], missing: [family]} when fontsBase is set
 //      {type: 'ready', info, media, openMs}
 //      {type: 'state', slide, step, animating}
 //      {type: 'cues', cues: [{shape, action}]}
 //      {type: 'metrics', frameMs, width, height}
+//      {type: 'notes', notes: [{fileId, notes}]} | {type: 'notesError', message}
 //      {type: 'error', message, fatal}
 
 /* global wasm_bindgen */ // declared by deckcraft_player.js, imported below
@@ -265,11 +268,26 @@ async function open ({ url, bytes, download }) {
   schedule()
 }
 
+// Speaker notes of another deck by file slide id, for a presenter on the attendee copy. Never fatal:
+// the deck on screen carries on.
+async function notes ({ url, bytes }) {
+  try {
+    const buf = bytes || await fetch(url).then(r => {
+      if (!r.ok) throw new Error(`could not download the notes (${r.status})`)
+      return r.arrayBuffer()
+    })
+    post({ type: 'notes', notes: wasm_bindgen.WebPlayer.notesOf(new Uint8Array(buf)) })
+  } catch (err) {
+    post({ type: 'notesError', message: String(err && err.message ? err.message : err) })
+  }
+}
+
 async function handle (m) {
   try {
     switch (m.type) {
       case 'init': await init(m); break
       case 'open': await open(m); break
+      case 'notes': await notes(m); break
       case 'resize': if (player) { player.resize(m.width); schedule() } break
       case 'jump': if (player) { player.jump(m.slide, m.step); schedule() } break
       case 'advance': if (player) { player.advance(m.slide, m.step, now()); schedule() } break

@@ -38,8 +38,22 @@ const show = () => {
   const p = player.position
   const k = player.info.slides.findIndex(s => s.index === p[0])
   $('where').textContent = `slide ${k + 1} of ${player.info.slides.length}, step ${p[1]}`
-  $('notes').textContent = player.info.slides[k]?.notes || ''
+  const slide = player.info.slides[k]
+  // ?notes=<original>: the original's notes for this slide, by file id (a presenter on the copy).
+  $('notes').textContent = notesByFile ? notesByFile.get(slide?.fileId) || '(no notes for this slide)' : slide?.notes || ''
 }
+let notesByFile = null
+player.on('ready', async info => {
+  if (params.get('notes') && !notesByFile) {
+    try {
+      notesByFile = await player.notesOf(params.get('notes'))
+      log('notes', { slides: notesByFile.size })
+    } catch (e) {
+      log('notes error', e.message)
+    }
+    show()
+  }
+})
 player.on('ready', info => { log('ready', { slides: info.slides.length, warnings: info.warnings }); show() })
 player.on('state', s => { window.metrics.state = s })
 player.on('metrics', m => {

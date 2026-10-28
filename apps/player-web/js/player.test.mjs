@@ -2,7 +2,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { trimStep } from './player.js'
+import { NotesRequest, trimStep } from './player.js'
 
 const DURATION = 100
 
@@ -30,4 +30,35 @@ test('a clip trimmed only at the start loops back to that start when it ends', (
 
 test('before the duration is known, nothing is decided', () => {
   assert.equal(trimStep({ trimStartMs: 2000, trimEndMs: 10000, loop: true }, 5, NaN), null)
+})
+
+// A worker that records what it was sent.
+const fakeWorker = () => ({ sent: [], postMessage (m) { this.sent.push(m) } })
+
+test('notesOf asks the worker and resolves to notes by file id', async () => {
+  const worker = fakeWorker()
+  const req = new NotesRequest()
+  const pending = req.ask(worker, 'https://cdn.example/original.pptx')
+  assert.deepEqual(worker.sent, [{ type: 'notes', url: 'https://cdn.example/original.pptx' }])
+  req.settle({ type: 'notes', notes: [{ fileId: 256, notes: 'One' }, { fileId: 259, notes: 'Four' }] })
+  const notes = await pending
+  assert.equal(notes.get(259), 'Four')
+  assert.equal(notes.size, 2)
+})
+
+test('a notesError rejects, and later replies with nothing pending are ignored', async () => {
+  const req = new NotesRequest()
+  const pending = req.ask(fakeWorker(), 'u')
+  req.settle({ type: 'notesError', message: 'unreadable' })
+  await assert.rejects(pending, /unreadable/)
+  assert.doesNotThrow(() => req.settle({ type: 'notes', notes: [] }))
+})
+
+test('a second request replaces the first, and cancel rejects what is pending', async () => {
+  const req = new NotesRequest()
+  const first = req.ask(fakeWorker(), 'a')
+  const second = req.ask(fakeWorker(), 'b')
+  await assert.rejects(first, /replaced/)
+  req.cancel()
+  await assert.rejects(second, /closed/)
 })

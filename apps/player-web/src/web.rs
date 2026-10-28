@@ -29,6 +29,20 @@ impl WebPlayer {
 
     /// Add a font under the family name a deck uses (a font request's `family`). Returns the
     /// faces added.
+    /// Another deck's speaker notes, by file slide id, without opening it: `[{fileId, notes}]`.
+    /// A presenter on the attendee copy matches them to `info().slides[].fileId`.
+    #[wasm_bindgen(js_name = notesOf)]
+    pub fn notes_of(bytes: &[u8]) -> Result<JsValue, JsError> {
+        let out = Array::new();
+        for n in Player::notes_of(bytes).map_err(|e| JsError::new(&e.to_string()))? {
+            let o = Object::new();
+            set(&o, "fileId", f64::from(n.file_id)).map_err(|_| JsError::new("notes"))?;
+            set(&o, "notes", n.notes.as_str()).map_err(|_| JsError::new("notes"))?;
+            out.push(&o);
+        }
+        Ok(out.into())
+    }
+
     #[wasm_bindgen(js_name = addFontAs)]
     pub fn add_font_as(bytes: Vec<u8>, family: &str) -> usize {
         Player::add_font_as(bytes, family)
@@ -52,7 +66,7 @@ impl WebPlayer {
         Ok(out.into())
     }
 
-    /// `{aspect, warnings, slides: [{index, title, notes, steps, autoFirst}]}`
+    /// `{aspect, warnings, slides: [{index, title, notes, fileId, steps, autoFirst}]}`
     pub fn info(&self) -> Result<JsValue, JsValue> {
         let slides = Array::new();
         for s in self.inner.slides() {
@@ -60,6 +74,7 @@ impl WebPlayer {
             set(&o, "index", s.index as f64)?;
             set(&o, "title", s.title.as_str())?;
             set(&o, "notes", s.notes.as_str())?;
+            set(&o, "fileId", s.file_id.map_or(JsValue::NULL, |id| JsValue::from_f64(f64::from(id))))?;
             set(&o, "steps", s.steps as f64)?;
             set(&o, "autoFirst", s.auto_first)?;
             slides.push(&o);

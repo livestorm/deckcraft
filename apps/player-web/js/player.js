@@ -9,6 +9,8 @@
 //   await p.open(url)
 //   p.advance(p.nextOf(p.position)) // a click
 //   p.jump(pos)                     // a jump, at rest
+//   await p.notesOf(originalUrl)    // presenters: Map of file slide id → notes of another deck;
+//                                   // the current slide's is info.slides[k].fileId
 //
 // Events (p.on(name, fn)): ready(info), state({slide, step, animating}), metrics(m), error(err),
 // fonts({loaded: [{family, from}], missing: [family]}) with fontsBase,
@@ -26,6 +28,36 @@ export function trimStep ({ trimStartMs = 0, trimEndMs = 0, loop = false }, time
   return loop ? { seek: start } : { stop: true }
 }
 
+// One speaker-notes request to the worker at a time: a newer request replaces a pending one.
+export class NotesRequest {
+  ask (worker, url) {
+    this.reject(new Error('replaced by a newer notes request'))
+    return new Promise((resolve, reject) => {
+      this.pending = { resolve, reject }
+      worker.postMessage({ type: 'notes', url })
+    })
+  }
+
+  // The worker's reply: {type: 'notes', notes: [{fileId, notes}]} or {type: 'notesError', message}.
+  settle (m) {
+    const p = this.pending
+    this.pending = null
+    if (!p) return
+    if (m.type === 'notes') p.resolve(new Map(m.notes.map(n => [n.fileId, n.notes])))
+    else p.reject(new Error(m.message))
+  }
+
+  cancel () {
+    this.reject(new Error('the player closed'))
+  }
+
+  reject (err) {
+    const p = this.pending
+    this.pending = null
+    p?.reject(err)
+  }
+}
+
 export class DeckcraftPlayer {
   constructor (container, { base = '', workerUrl, glueUrl, wasmUrl, fonts = [], fontsBase = null, controls = false } = {}) {
     this.container = container
@@ -35,6 +67,7 @@ export class DeckcraftPlayer {
     this.fontsBase = fontsBase
     this.controls = controls
     this.handlers = {}
+    this.notes = new NotesRequest()
     this.info = null
     this.media = []
     this.position = null
@@ -158,6 +191,8 @@ export class DeckcraftPlayer {
       case 'cues': for (const c of m.cues) this.cue(c.shape, c.action); break
       case 'metrics': this.emit('metrics', m); break
       case 'fonts': this.emit('fonts', { loaded: m.loaded, missing: m.missing }); break
+      case 'notes':
+      case 'notesError': this.notes.settle(m); break
       case 'error':
         if (!this.info) this.rejectInit(new Error(m.message))
         if (m.fatal) this.crashed(m.message)
@@ -271,7 +306,14 @@ export class DeckcraftPlayer {
     m.el.pause()
   }
 
+  // The speaker notes of another deck (the original of the attendee copy on screen), by file
+  // slide id. Notes stay here: never send them on to other people.
+  notesOf (url) {
+    return this.notes.ask(this.worker, new URL(url, location.href).href)
+  }
+
   destroy () {
+    this.notes.cancel()
     this.resizeObserver?.disconnect()
     this.worker?.terminate()
     for (const m of this.media) if (m.el.src.startsWith('blob:')) URL.revokeObjectURL(m.el.src)

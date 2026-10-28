@@ -507,6 +507,10 @@ fn checksum(d: &[u8]) -> u32 {
     })
 }
 
+fn checked_table_size(current: usize, len: usize) -> Option<usize> {
+    current.checked_add(len.checked_add(3)? & !3)
+}
+
 /// The TrueType font from the three decompressed streams: the tables (CTF), the glyphs' push data
 /// and their instructions.
 fn rebuild(tables: &[u8], push: &[u8], code: &[u8]) -> Option<Vec<u8>> {
@@ -547,7 +551,7 @@ fn rebuild(tables: &[u8], push: &[u8], code: &[u8]) -> Option<Vec<u8>> {
             b"cvt " => cvt_table.len(),
             _ => data.len(),
         };
-        size += len.next_multiple_of(4);
+        size = checked_table_size(size, len)?;
         if size > MAX_OUT {
             return None;
         }
@@ -598,6 +602,13 @@ mod tests {
     use skrifa::instance::{LocationRef, Size};
     use skrifa::outline::{DrawSettings, OutlinePen};
     use skrifa::raw::TableProvider;
+
+    #[test]
+    fn rebuilt_table_size_checks_padding_and_addition() {
+        assert_eq!(checked_table_size(12, 5), Some(20));
+        assert_eq!(checked_table_size(usize::MAX - 3, 4), None);
+        assert_eq!(checked_table_size(12, usize::MAX), None);
+    }
 
     // ---- an MTX writer, enough to make test fonts from a TrueType one ----
 

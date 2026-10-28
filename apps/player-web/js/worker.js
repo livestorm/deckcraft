@@ -5,12 +5,15 @@
 //      {type: 'open', url} | {type: 'open', bytes: ArrayBuffer}
 //      {type: 'resize', width}
 //      {type: 'jump', slide, step} | {type: 'advance', slide, step}
+//      {type: 'notes', url, id} | {type: 'notes', bytes, id}: another deck's speaker notes. The
+//        download runs alongside everything else; only reading the deck joins the queue
 // Out: {type: 'initialized', loadMs}
 //      {type: 'fonts', loaded: [{family, from}], missing: [family]} when fontsBase is set
 //      {type: 'ready', info, media, openMs}
 //      {type: 'state', slide, step, animating}
 //      {type: 'cues', cues: [{shape, action}]}
 //      {type: 'metrics', frameMs, width, height}
+//      {type: 'notes', id, notes: [{fileId, notes}]} | {type: 'notesError', id, message}
 //      {type: 'error', message, fatal}
 
 /* global wasm_bindgen */ // declared by deckcraft_player.js, imported below
@@ -265,6 +268,21 @@ async function open ({ url, bytes, download }) {
   schedule()
 }
 
+// Speaker notes of another deck by file slide id, for a presenter on the attendee copy. The download
+// doesn't hold the queue, so the deck on screen keeps answering jumps and resizes; only reading the
+// deck (wasm, in this thread) waits its turn. Never fatal. Replies carry the request's id.
+async function startNotes ({ url, bytes, id }, { fetchFn, enqueue, notesOf, post }) {
+  try {
+    const buf = bytes || await fetchFn(url).then(r => {
+      if (!r.ok) throw new Error(`could not download the notes (${r.status})`)
+      return r.arrayBuffer()
+    })
+    await enqueue(() => post({ type: 'notes', id, notes: notesOf(new Uint8Array(buf)) }))
+  } catch (err) {
+    post({ type: 'notesError', id, message: String(err && err.message ? err.message : err) })
+  }
+}
+
 async function handle (m) {
   try {
     switch (m.type) {
@@ -279,18 +297,29 @@ async function handle (m) {
   }
 }
 
+// Messages run one after the other: an `open` sent right after `init` waits for the module. A task
+// that throws leaves the queue running for the ones after it.
+let queue = Promise.resolve()
+function enqueue (task) {
+  const run = queue.then(task)
+  queue = run.catch(() => {})
+  return run
+}
+
 if (typeof module === 'object' && module.exports) {
   // Node, for the tests (worker.test.js).
-  module.exports = { familyKey, pickFace, loadFonts, MAX_FETCHES }
+  module.exports = { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue }
 } else {
-  // Messages run one after the other: an `open` sent right after `init` waits for the module,
-  // but its download starts now, alongside the module's.
-  let queue = Promise.resolve()
+  // An `open`'s download starts at once, alongside the module's; so does a notes download.
   self.onmessage = ({ data }) => {
     if (data.type === 'open' && data.url && !data.bytes) {
       data.download = fetch(data.url)
       data.download.catch(() => {})
     }
-    queue = queue.then(() => handle(data))
+    if (data.type === 'notes') {
+      startNotes(data, { fetchFn: fetch, enqueue, notesOf: bytes => wasm_bindgen.WebPlayer.notesOf(bytes), post })
+      return
+    }
+    enqueue(() => handle(data))
   }
 }

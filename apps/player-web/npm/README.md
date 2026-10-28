@@ -73,6 +73,28 @@ Any error response means the family isn't there. The server must send CORS heade
 The `fonts` event lists what was loaded and the families that found nothing. You can still pass
 font files of your own as `fonts: [url]`; they load before any deck.
 
+## Speaker notes for presenters
+
+Attendees should open a copy of the deck without its speaker notes. Hidden slides are removed from
+that copy too, so a slide's index can differ between the copy and the original. Every slide keeps
+its id from the file (`p:sldId id`), which `info.slides[].fileId` reports.
+
+A presenter opens the copy like everyone else, so positions stay in step, and reads the original's
+notes on the side:
+
+```js
+const notes = await player.notesOf(originalUrl)   // Map of file slide id → notes (plain text)
+const slide = player.info.slides.find(s => s.index === player.position[0])
+showNotes(notes.get(slide.fileId) ?? '')
+```
+
+`notesOf` reads the original in the worker without touching the deck on screen. A newer call
+replaces a pending one; it rejects if the original can't be read. Keep the notes in the presenter's
+browser: don't send them to other people through your own sync.
+
+Worker protocol: send `{type: 'notes', url}`; the worker answers `{type: 'notes', notes: [{fileId,
+notes}]}` or `{type: 'notesError', message}`.
+
 The module needs WebAssembly SIMD (Chrome 91, Firefox 89, Safari 16.4).
 
 Dual-licensed under MIT or Apache-2.0. The compiled-in last-resort face is Ubuntu Light (Ubuntu

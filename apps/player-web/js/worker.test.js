@@ -2,7 +2,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { familyKey, pickFace, loadFonts, MAX_FETCHES } = require('./worker.js')
+const { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue } = require('./worker.js')
 
 const BASE = 'https://fonts.example/'
 
@@ -105,4 +105,40 @@ test('at most a few fetches run at once', async () => {
   await loadFonts(requests, BASE, fetch)
   assert.ok(most <= MAX_FETCHES, `${most} fetches at once`)
   assert.ok(most > 1, 'still in parallel')
+})
+
+test('a notes download runs outside the worker queue; only the read joins it, and replies carry the id', async () => {
+  let release
+  const download = new Promise(resolve => { release = resolve })
+  const enqueued = []
+  const posted = []
+  const done = startNotes({ type: 'notes', url: 'https://cdn.example/o.pptx', id: 7 }, {
+    fetchFn: async () => ({ ok: true, arrayBuffer: () => download }),
+    enqueue: task => { enqueued.push(task); return task() },
+    notesOf: bytes => [{ fileId: 256, notes: `read ${bytes.length} bytes` }],
+    post: m => posted.push(m),
+  })
+  await new Promise(resolve => setTimeout(resolve, 5))
+  assert.equal(enqueued.length, 0, 'nothing queued while the download runs')
+  release(new ArrayBuffer(3))
+  await done
+  assert.equal(enqueued.length, 1)
+  assert.deepEqual(posted, [{ type: 'notes', id: 7, notes: [{ fileId: 256, notes: 'read 3 bytes' }] }])
+})
+
+test('a failed notes download or read answers notesError with the id, never fatal', async () => {
+  const posted = []
+  const deps = { enqueue: task => task(), notesOf: () => { throw new Error('unreadable') }, post: m => posted.push(m) }
+  await startNotes({ type: 'notes', url: 'u', id: 1 }, { ...deps, fetchFn: async () => ({ ok: false, status: 403 }) })
+  await startNotes({ type: 'notes', bytes: new ArrayBuffer(1), id: 2 }, { ...deps, fetchFn: async () => { throw new Error('no fetch') } })
+  assert.deepEqual(posted.map(m => [m.type, m.id]), [['notesError', 1], ['notesError', 2]])
+  assert.match(posted[0].message, /403/)
+  assert.match(posted[1].message, /unreadable/)
+})
+
+test('a task that throws in the queue does not stop the ones after it', async () => {
+  const ran = []
+  await assert.rejects(enqueue(() => { throw new Error('bad deck') }), /bad deck/)
+  await enqueue(() => ran.push('jump'))
+  assert.deepEqual(ran, ['jump'])
 })

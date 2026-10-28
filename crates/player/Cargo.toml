@@ -22,3 +22,4 @@ thiserror = { workspace = true }
 [dev-dependencies]
 deckcraft-engine = { workspace = true }
 image = { workspace = true }
+zip = { workspace = true }

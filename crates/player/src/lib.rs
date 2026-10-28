@@ -56,6 +56,9 @@ pub struct SlideInfo {
     pub index: usize,
     pub title: String,
     pub notes: String,
+    /// The slide's id in the file (`p:sldId id`). A copy of the deck with slides removed (an
+    /// attendee copy without hidden slides) keeps it, so it joins the two while indexes differ.
+    pub file_id: Option<u32>,
     /// Main steps: clicks, plus an automatic first step when the first effect starts by itself.
     pub steps: usize,
     /// The first step plays by itself when the slide appears.
@@ -179,10 +182,7 @@ impl Player {
     /// Read a `.pptx` / `.ppsx` and install the fonts it embeds. Starts at the first slide, at
     /// rest, 1280 px wide.
     pub fn open(bytes: &[u8]) -> Result<Player, OpenError> {
-        if !deckcraft_pptx::sniff(bytes) {
-            return Err(if deckcraft_pptx::is_encrypted(bytes) { OpenError::Encrypted } else { OpenError::NotPptx });
-        }
-        let (mut pres, lost) = deckcraft_pptx::import_checked(bytes).map_err(|e| OpenError::Unreadable(e.to_string()))?;
+        let (mut pres, lost) = read(bytes)?;
         deckcraft_format::repair(&mut pres);
         install_embedded_fonts(&pres);
         let order = show_order(&pres);
@@ -206,6 +206,15 @@ impl Player {
         player.resize(1280);
         player.pos = player.entry(first);
         Ok(player)
+    }
+
+    /// The speaker notes of another deck, by file slide id, without opening it for show: a
+    /// presenter on the attendee copy reads the original's notes and matches them by
+    /// [`SlideInfo::file_id`]. Every slide the file lists, hidden ones included; slides without a
+    /// file id are left out. Nothing is kept, and no fonts are installed.
+    pub fn notes_of(bytes: &[u8]) -> Result<Vec<SlideNotes>, OpenError> {
+        let (pres, _) = read(bytes)?;
+        Ok(pres.slides.iter().filter_map(|s| Some(SlideNotes { file_id: s.file_id?, notes: s.notes_text() })).collect())
     }
 
     /// Add a font (TTF, OTF or TTC) for text to be drawn in, e.g. a stand-in for an Office font.
@@ -249,7 +258,14 @@ impl Player {
             .iter()
             .filter_map(|&i| {
                 let slide = self.pres.slides.get(i)?;
-                Some(SlideInfo { index: i, title: slide.title(), notes: slide.notes_text(), steps: self.steps(i), auto_first: self.auto_first(i) })
+                Some(SlideInfo {
+                    index: i,
+                    title: slide.title(),
+                    notes: slide.notes_text(),
+                    file_id: slide.file_id,
+                    steps: self.steps(i),
+                    auto_first: self.auto_first(i),
+                })
             })
             .collect()
     }
@@ -674,6 +690,21 @@ fn requests_for(used: &[deckcraft_model::fonts::UsedFont], has: impl Fn(&str) ->
         }
     }
     out
+}
+
+/// One slide's speaker notes, by its id in the file ([`Player::notes_of`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SlideNotes {
+    pub file_id: u32,
+    pub notes: String,
+}
+
+/// A .pptx / .ppsx read for the player, and the slides that couldn't be read.
+fn read(bytes: &[u8]) -> Result<(Presentation, Vec<String>), OpenError> {
+    if !deckcraft_pptx::sniff(bytes) {
+        return Err(if deckcraft_pptx::is_encrypted(bytes) { OpenError::Encrypted } else { OpenError::NotPptx });
+    }
+    deckcraft_pptx::import_checked(bytes).map_err(|e| OpenError::Unreadable(e.to_string()))
 }
 
 /// Fonts the deck carries (TrueType or Embedded OpenType), installed for its text.

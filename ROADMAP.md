@@ -131,6 +131,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-28 | Browser player: speaker notes for presenters. Slides keep their `.pptx` slide id (`file_id`), which a copy of the deck without hidden slides shares with the original, and `notesOf` reads the original's notes by that id while the presenter shows the copy (npm 0.3.0) |
 | 2026-10-27 | Media: a clip's volume, Loop until Stopped and Hide While Not Playing are read from and written to PPTX (`p:cMediaNode`, part of #74). The browser player starts the media of a slide's automatic first step when the deck opens or a jump lands on the slide (a waiting screen's background music was silent), and loops clips |
 | 2026-10-23 | The browser player compiles in no fonts but a last-resort face and fetches each deck's fonts from Livestorm's Google Fonts mirror: the family itself in the weights used ("Montserrat Light"), its metric-compatible stand-in (Carlito, Caladea, Arimo, Tinos, Cousine, Inter), else a sans, serif or monospace face chosen from the file's `pitchFamily`/`panose`, plus a face for Japanese, Chinese, Korean, Arabic, Hebrew, Thai or Devanagari text. wasm 4.3 → 1.6 MB with brotli, npm package 9.5 → 2.2 MB; `panose` and `pitchFamily` now round-trip on run and theme fonts |
 | 2026-10-18 | Native chart sidecar bytes move from JSON arrays into referenced ZIP entries, with shared media byte/item limits and bounded reads; older inline sidecars still load. Synthetic format regressions cover large workbooks and malformed members |

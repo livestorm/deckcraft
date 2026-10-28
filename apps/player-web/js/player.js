@@ -28,21 +28,28 @@ export function trimStep ({ trimStartMs = 0, trimEndMs = 0, loop = false }, time
   return loop ? { seek: start } : { stop: true }
 }
 
-// One speaker-notes request to the worker at a time: a newer request replaces a pending one.
+// One speaker-notes request to the worker at a time: a newer request replaces a pending one. Each
+// carries an id the worker echoes, so a late reply to a replaced request is dropped.
 export class NotesRequest {
+  constructor () {
+    this.nextId = 1
+    this.pending = null
+  }
+
   ask (worker, url) {
     this.reject(new Error('replaced by a newer notes request'))
+    const id = this.nextId++
     return new Promise((resolve, reject) => {
-      this.pending = { resolve, reject }
-      worker.postMessage({ type: 'notes', url })
+      this.pending = { id, resolve, reject }
+      worker.postMessage({ type: 'notes', url, id })
     })
   }
 
-  // The worker's reply: {type: 'notes', notes: [{fileId, notes}]} or {type: 'notesError', message}.
+  // The worker's reply: {type: 'notes', id, notes: [{fileId, notes}]} or {type: 'notesError', id, message}.
   settle (m) {
     const p = this.pending
+    if (!p || m.id !== p.id) return
     this.pending = null
-    if (!p) return
     if (m.type === 'notes') p.resolve(new Map(m.notes.map(n => [n.fileId, n.notes])))
     else p.reject(new Error(m.message))
   }

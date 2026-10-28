@@ -39,8 +39,9 @@ test('notesOf asks the worker and resolves to notes by file id', async () => {
   const worker = fakeWorker()
   const req = new NotesRequest()
   const pending = req.ask(worker, 'https://cdn.example/original.pptx')
-  assert.deepEqual(worker.sent, [{ type: 'notes', url: 'https://cdn.example/original.pptx' }])
-  req.settle({ type: 'notes', notes: [{ fileId: 256, notes: 'One' }, { fileId: 259, notes: 'Four' }] })
+  const [sent] = worker.sent
+  assert.deepEqual(sent, { type: 'notes', url: 'https://cdn.example/original.pptx', id: sent.id })
+  req.settle({ type: 'notes', id: sent.id, notes: [{ fileId: 256, notes: 'One' }, { fileId: 259, notes: 'Four' }] })
   const notes = await pending
   assert.equal(notes.get(259), 'Four')
   assert.equal(notes.size, 2)
@@ -48,10 +49,11 @@ test('notesOf asks the worker and resolves to notes by file id', async () => {
 
 test('a notesError rejects, and later replies with nothing pending are ignored', async () => {
   const req = new NotesRequest()
-  const pending = req.ask(fakeWorker(), 'u')
-  req.settle({ type: 'notesError', message: 'unreadable' })
+  const worker = fakeWorker()
+  const pending = req.ask(worker, 'u')
+  req.settle({ type: 'notesError', id: worker.sent[0].id, message: 'unreadable' })
   await assert.rejects(pending, /unreadable/)
-  assert.doesNotThrow(() => req.settle({ type: 'notes', notes: [] }))
+  assert.doesNotThrow(() => req.settle({ type: 'notes', id: worker.sent[0].id, notes: [] }))
 })
 
 test('a second request replaces the first, and cancel rejects what is pending', async () => {
@@ -61,4 +63,16 @@ test('a second request replaces the first, and cancel rejects what is pending', 
   await assert.rejects(first, /replaced/)
   req.cancel()
   await assert.rejects(second, /closed/)
+})
+
+test('a reply to a replaced request is ignored: the newer one gets its own reply', async () => {
+  const req = new NotesRequest()
+  const worker = fakeWorker()
+  req.ask(worker, 'a').catch(() => {})
+  const b = req.ask(worker, 'b')
+  const [a, bSent] = worker.sent
+  assert.notEqual(a.id, bSent.id)
+  req.settle({ type: 'notes', id: a.id, notes: [{ fileId: 1, notes: 'from a' }] })
+  req.settle({ type: 'notes', id: bSent.id, notes: [{ fileId: 1, notes: 'from b' }] })
+  assert.equal((await b).get(1), 'from b')
 })

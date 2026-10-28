@@ -27,8 +27,6 @@ impl WebPlayer {
         Player::add_font(bytes)
     }
 
-    /// Add a font under the family name a deck uses (a font request's `family`). Returns the
-    /// faces added.
     /// Another deck's speaker notes, by file slide id, without opening it: `[{fileId, notes}]`.
     /// A presenter on the attendee copy matches them to `info().slides[].fileId`.
     #[wasm_bindgen(js_name = notesOf)]
@@ -43,6 +41,8 @@ impl WebPlayer {
         Ok(out.into())
     }
 
+    /// Add a font under the family name a deck uses (a font request's `family`). Returns the
+    /// faces added.
     #[wasm_bindgen(js_name = addFontAs)]
     pub fn add_font_as(bytes: Vec<u8>, family: &str) -> usize {
         Player::add_font_as(bytes, family)

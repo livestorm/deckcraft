@@ -631,6 +631,11 @@ pub struct Slide {
     /// Unmodelled XML kept for round-trip (custom data).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_ext: Option<String>,
+    /// The slide's id in the file it was read from (`p:sldId id`); None for slides made here.
+    /// A copy of a deck with slides removed keeps the others' ids, so it names the same slides.
+    /// Not written back: saving numbers slides afresh.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_id: Option<u32>,
 }
 
 impl Default for Slide {
@@ -650,6 +655,7 @@ impl Default for Slide {
             color_map: None,
             tags: vec![],
             raw_ext: None,
+            file_id: None,
         }
     }
 }

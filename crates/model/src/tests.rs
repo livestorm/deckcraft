@@ -270,3 +270,15 @@ fn ink_width_follows_pressure_and_keeps_the_old_placeholder() {
     assert!((floor - 0.64).abs() < 1e-4, "a light touch stays visible, got {floor}");
     assert!((ink_sample_width(8.0, f32::NAN, false) - 8.0).abs() < 1e-9);
 }
+
+#[test]
+fn a_slide_writes_its_file_id_only_when_it_has_one() {
+    let plain = Slide::default();
+    let json = serde_json::to_string(&plain).expect("serialize");
+    assert!(!json.contains("fileId"), "{json}");
+    let back: Slide = serde_json::from_str(&json).expect("an old slide reads back");
+    assert_eq!(back.file_id, None);
+    let read = Slide { file_id: Some(412), ..Slide::default() };
+    let back: Slide = serde_json::from_str(&serde_json::to_string(&read).expect("serialize")).expect("deserialize");
+    assert_eq!(back.file_id, Some(412));
+}

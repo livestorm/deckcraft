@@ -28,9 +28,9 @@ await player.open(deckUrl)
 
 ## Fonts
 
-Only one font is compiled in, a last resort so text always shows. Pass `fontsBase`, the fonts CDN
-of entropy's `packages/fonts` (Google Fonts, every weight and character set). Opening a deck then
-downloads just the fonts it uses, before its first slide is drawn:
+Only one font is compiled in, a last resort so text always shows. Pass `fontsBase`, the URL of a
+font server: a Google Fonts mirror with every weight and character set, one folder per family.
+Opening a deck then downloads just the fonts it uses, before its first slide is drawn:
 
 - fonts the deck embeds are used as they are;
 - a family on the server is fetched by name, in the weights and styles the deck uses
@@ -45,6 +45,30 @@ downloads just the fonts it uses, before its first slide is drawn:
   Chinese draws with Japanese glyph shapes: Google's Chinese faces are Noto CJK (Source Han
   renamed), which DeckCraft doesn't use, nor Adobe's Source families, even when a deck names them;
 - at most 64 fonts per deck, 6 downloads at a time.
+
+### Font server layout
+
+```
+<fontsBase>families/<key>/family.json
+<fontsBase>families/<key>/<file>
+```
+
+`<key>` is the family name lowercased with spaces as hyphens (`Open Sans` → `open-sans`).
+`family.json` lists the family's faces as TrueType files:
+
+```json
+{
+  "family": "Open Sans",
+  "category": "sans-serif",
+  "faces": [
+    { "weight": 400, "italic": false, "file": "open-sans-400.ttf" },
+    { "weight": 700, "italic": true, "file": "open-sans-700italic.ttf" }
+  ]
+}
+```
+
+Any error response means the family isn't there. The server must send CORS headers
+(`Access-Control-Allow-Origin`) for the pages the player runs on.
 
 The `fonts` event lists what was loaded and the families that found nothing. You can still pass
 font files of your own as `fonts: [url]`; they load before any deck.

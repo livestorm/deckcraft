@@ -260,13 +260,9 @@ fn unpack(data: &[u8], version: u8) -> Option<Vec<u8>> {
             let mut code = first % 8;
             let mut length = 0;
             loop {
-                length = length << 2 | code & 3;
+                length = next_copy_length(length, code, out_len)?;
                 if code & 4 == 0 {
                     break;
-                }
-                // No copy is longer than the stream, which also keeps the shift from overflowing.
-                if length > out_len {
-                    return None;
                 }
                 code = len.read(&mut bits)?;
             }
@@ -314,6 +310,11 @@ fn unpack(data: &[u8], version: u8) -> Option<Vec<u8>> {
         }
     }
     Some(out)
+}
+
+fn next_copy_length(length: usize, code: usize, out_len: usize) -> Option<usize> {
+    let length = length.checked_mul(4)?.checked_add(code & 3)?;
+    (length <= out_len).then_some(length)
 }
 
 /// One row of the table that turns a glyph point's flag byte into a coordinate step.
@@ -634,6 +635,14 @@ mod tests {
             path.iter().rev().for_each(|&b| out.bit(b));
             self.update(leaf);
         }
+    }
+
+    #[test]
+    fn copy_length_rejects_overflow_before_accumulating() {
+        assert_eq!(next_copy_length(10, 1, 41), Some(41));
+        assert_eq!(next_copy_length(10, 1, 40), None);
+        assert_eq!(next_copy_length(usize::MAX / 4 + 1, 0, usize::MAX), None);
+        assert_eq!(next_copy_length(usize::MAX / 4, 3, usize::MAX), Some(usize::MAX));
     }
 
     /// The window an LZCOMP stream starts out holding.

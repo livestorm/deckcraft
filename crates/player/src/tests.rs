@@ -401,3 +401,71 @@ mod speaker_notes {
         assert!(matches!(Player::notes_of(b"not a deck"), Err(OpenError::NotPptx)));
     }
 }
+
+mod online_video {
+    use std::io::{Cursor, Read, Write};
+
+    use super::*;
+
+    const URL: &str = "https://www.youtube.com/embed/9AsqmGTAxmY?feature=oembed";
+
+    /// A one-slide deck with a YouTube video as PowerPoint 16 saves one (Insert > Online Video): a
+    /// picture whose `a:videoFile` links to an external video relationship, no `p14:media`, and a
+    /// click that plays it (`playFrom`) at 80% volume.
+    fn deck() -> Vec<u8> {
+        let p = deckcraft_model::defaults::new_presentation(None);
+        let bytes = deckcraft_pptx::export(&p).expect("export");
+        let pic = r#"<p:pic><p:nvPicPr><p:cNvPr id="90" name="Online Media 1" title="A video"><a:hlinkClick r:id="" action="ppaction://media"/></p:cNvPr><p:cNvPicPr><a:picLocks noRot="1" noChangeAspect="1"/></p:cNvPicPr><p:nvPr><a:videoFile r:link="rIdYt"/></p:nvPr></p:nvPicPr><p:blipFill><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="1524000" y="762000"/><a:ext cx="6096000" cy="3429000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>"#;
+        let timing = r#"<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst><p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst><p:par><p:cTn id="3" fill="hold"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst><p:childTnLst><p:par><p:cTn id="4" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst><p:par><p:cTn id="5" presetID="1" presetClass="mediacall" presetSubtype="0" fill="hold" nodeType="clickEffect"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst><p:cmd type="call" cmd="playFrom(0.0)"><p:cBhvr><p:cTn id="6" dur="1" fill="hold"/><p:tgtEl><p:spTgt spid="90"/></p:tgtEl></p:cBhvr></p:cmd></p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn><p:prevCondLst><p:cond evt="onPrev" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:prevCondLst><p:nextCondLst><p:cond evt="onNext" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:nextCondLst></p:seq><p:video><p:cMediaNode vol="80000"><p:cTn id="7" fill="hold" display="0"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="90"/></p:tgtEl></p:cMediaNode></p:video></p:childTnLst></p:cTn></p:par></p:tnLst></p:timing>"#;
+        let rel = format!(
+            r#"<Relationship Id="rIdYt" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/video" Target="{}" TargetMode="External"/>"#,
+            URL.replace('&', "&amp;")
+        );
+        let mut z = zip::ZipArchive::new(Cursor::new(bytes)).expect("zip");
+        let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let o = zip::write::SimpleFileOptions::default();
+        for i in 0..z.len() {
+            let mut f = z.by_index(i).expect("entry");
+            let name = f.name().to_string();
+            let mut d = vec![];
+            f.read_to_end(&mut d).expect("read");
+            if name == "ppt/slides/slide1.xml" {
+                let xml = String::from_utf8(d).expect("utf8").replacen("</p:spTree>", &format!("{pic}</p:spTree>"), 1);
+                assert!(!xml.contains("<p:timing"), "the blank slide has no timing of its own");
+                d = xml.replacen("</p:sld>", &format!("{timing}</p:sld>"), 1).into_bytes();
+            } else if name == "ppt/slides/_rels/slide1.xml.rels" {
+                d = String::from_utf8(d).expect("utf8").replacen("</Relationships>", &format!("{rel}</Relationships>"), 1).into_bytes();
+            }
+            out.start_file(name, o).expect("start");
+            out.write_all(&d).expect("write");
+        }
+        out.finish().expect("finish").into_inner()
+    }
+
+    #[test]
+    fn a_youtube_video_reaches_the_host_as_a_linked_video() {
+        let mut p = Player::open(&deck()).expect("open");
+        p.resize(160);
+        let clips = p.media();
+        assert_eq!(clips.len(), 1);
+        let c = &clips[0];
+        assert!(c.video);
+        assert_eq!(c.link.as_deref(), Some(URL));
+        assert!(c.data.is_empty(), "nothing embedded");
+        assert!((c.volume - 0.8).abs() < 1e-9);
+        let [x, y, w, h] = c.rect;
+        assert!(x > 0.0 && y > 0.0 && w > 0.0 && h > 0.0 && x + w <= 1.0 && y + h <= 1.0, "{:?}", c.rect);
+    }
+
+    #[test]
+    fn its_click_plays_it() {
+        let mut p = Player::open(&deck()).expect("open");
+        p.resize(160);
+        let shape = p.media()[0].shape;
+        p.frame(0.0);
+        let next = p.next_of(p.position()).expect("the click");
+        p.advance(next, 0.1);
+        let cues: Vec<Cue> = (0..40).flat_map(|i| p.frame(0.1 + f64::from(i) * 0.1).cues).collect();
+        assert_eq!(cues, [Cue { shape, action: "play".into() }]);
+    }
+}

@@ -95,6 +95,21 @@ browser: don't send them to other people through your own sync.
 Worker protocol: send `{type: 'notes', url}`; the worker answers `{type: 'notes', notes: [{fileId,
 notes}]}` or `{type: 'notesError', message}`.
 
+## YouTube videos
+
+A YouTube video inserted in PowerPoint (Insert > Video > Online Video) plays in YouTube's own
+player over the slide, in privacy-enhanced mode (`www.youtube-nocookie.com`). It follows the deck's
+media effects and `mediaAction` like any clip: with `controls`, YouTube's controls report plays and
+pauses as `mediaAction`, and everyone else's player follows. A start or end time in the link
+(`?start=`, `?t=1m30s`, `?end=`) bounds the clip.
+
+YouTube's script loads only for a deck with a YouTube video, and each video's player is made the
+first time its slide shows. The page must allow `script-src https://www.youtube.com` and
+`frame-src https://www.youtube-nocookie.com`. A video that can't play (YouTube blocked, embedding
+disabled, video removed) gives `error` with `{message: 'video-unavailable', fatal: false}`, and its
+poster stays on the slide. Each viewer streams from YouTube, so viewers drift by up to a second or
+so, and YouTube may show them ads. Other online video services show their poster.
+
 The module needs WebAssembly SIMD (Chrome 91, Firefox 89, Safari 16.4).
 
 Dual-licensed under MIT or Apache-2.0. The compiled-in last-resort face is Ubuntu Light (Ubuntu

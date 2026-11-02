@@ -2,7 +2,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { NotesRequest, YouTubeClip, loadYouTubeApi, trimStep, youtubeVideo } from './player.js'
+import { DeckcraftPlayer, NotesRequest, YouTubeClip, loadYouTubeApi, trimStep, youtubeVideo } from './player.js'
 
 const DURATION = 100
 
@@ -353,4 +353,50 @@ test('a paused clip that has not started is moved only when it plays: YouTube wo
   assert.equal(p.calls.length, after, 'nor is an ended one')
   await settle()
   assert.deepEqual(events.filter(e => e === 'play'), ['play'], 'no play but the one asked for')
+})
+
+test('a clip destroyed while YouTube loads makes no player, and a player ready after that is destroyed', async () => {
+  const yt = fakeYouTube()
+  let loaded
+  const clip = new YouTubeClip({ id: 'dQw4w9WgXcQ', box: fakeBox(), api: () => new Promise(resolve => { loaded = resolve }) })
+  clip.play()
+  clip.destroy()
+  loaded(yt)
+  await settle()
+  assert.equal(yt.made, null, 'no player for a destroyed clip')
+
+  const late = await readyClipBeforeReady()
+  late.clip.play()
+  late.clip.destroy()
+  late.yt.fire('onReady')
+  assert.deepEqual(late.yt.made.calls, [['destroy']], 'nothing played, and the player is let go')
+})
+
+// A clip whose player is made but not yet ready.
+async function readyClipBeforeReady () {
+  const yt = fakeYouTube()
+  const clip = new YouTubeClip({ id: 'dQw4w9WgXcQ', box: fakeBox(), api: async () => yt })
+  clip.mount()
+  await settle()
+  return { yt, clip }
+}
+
+// A DeckcraftPlayer with only its media plumbing: no worker, no page.
+function bareCanvasPlayer () {
+  const p = Object.create(DeckcraftPlayer.prototype)
+  p.handlers = {}
+  p.errors = []
+  p.on('error', e => p.errors.push(e.message))
+  return p
+}
+
+test('a clip that cannot play is not reported as blocked sound', async () => {
+  const p = bareCanvasPlayer()
+  const unavailable = Object.assign(new Error('video-unavailable'), { name: 'NotSupportedError' })
+  p.play({ el: { paused: true, play: () => Promise.reject(unavailable) }, quiet: 0 })
+  await settle()
+  assert.deepEqual(p.errors, [])
+  p.play({ el: { paused: true, play: () => Promise.reject(Object.assign(new Error('blocked'), { name: 'NotAllowedError' })) }, quiet: 0 })
+  await settle()
+  assert.deepEqual(p.errors, ['sound-blocked'])
 })

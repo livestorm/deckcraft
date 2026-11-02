@@ -54,6 +54,10 @@ export function youtubeVideo (link) {
 
 const youtubeApis = new WeakMap()
 
+// Errors named as a media element's play() names them: NotAllowedError for blocked sound,
+// NotSupportedError for a video that can't play.
+const mediaError = (name, message) => Object.assign(new Error(message), { name })
+
 // The YouTube IFrame API of `win`, loaded once, and only when a deck has a YouTube video.
 export function loadYouTubeApi (win = globalThis, timeoutMs = 15000) {
   if (win.YT?.Player) return Promise.resolve(win.YT)
@@ -98,6 +102,7 @@ export class YouTubeClip extends EventTarget {
     this.player = null
     this.failed = false
     this.mounted = false
+    this.destroyed = false
     this.paused_ = true
     this.volume_ = 1
     this.seek = null
@@ -142,6 +147,7 @@ export class YouTubeClip extends EventTarget {
   }
 
   create (YT) {
+    if (this.destroyed) return
     this.states = YT.PlayerState
     const target = this.box.appendChild(this.box.ownerDocument.createElement('div'))
     // eslint-disable-next-line no-new
@@ -154,13 +160,14 @@ export class YouTubeClip extends EventTarget {
       events: {
         onReady: e => this.ready(e.target),
         onStateChange: e => this.changed(e.data),
-        onAutoplayBlocked: () => this.stopped(new Error('sound-blocked')),
+        onAutoplayBlocked: () => this.stopped(mediaError('NotAllowedError', 'sound-blocked')),
         onError: () => this.fail()
       }
     })
   }
 
   ready (player) {
+    if (this.destroyed) return player.destroy()
     this.player = player
     player.setVolume(Math.round(this.volume_ * 100))
     if (this.seek !== null) this.currentTime = this.seek
@@ -170,7 +177,7 @@ export class YouTubeClip extends EventTarget {
 
   play () {
     this.mount()
-    if (this.failed) return Promise.reject(new Error('video-unavailable'))
+    if (this.failed) return Promise.reject(mediaError('NotSupportedError', 'video-unavailable'))
     if (this.paused_) {
       this.paused_ = false
       this.fire('play')
@@ -238,7 +245,7 @@ export class YouTubeClip extends EventTarget {
 
   fail () {
     this.failed = true
-    this.stopped(new Error('video-unavailable'))
+    this.stopped(mediaError('NotSupportedError', 'video-unavailable'))
     this.fire('error')
   }
 
@@ -251,7 +258,10 @@ export class YouTubeClip extends EventTarget {
     this.timer = null
   }
 
+  // A player that turns up after this is let go: see create and ready.
   destroy () {
+    this.destroyed = true
+    this.waiting = []
     this.stopTimer()
     this.player?.destroy()
   }
@@ -543,9 +553,10 @@ export class DeckcraftPlayer {
   play (m) {
     if (!m.el.paused) return
     m.quiet += 1
-    m.el.play().catch(() => {
+    m.el.play().catch(err => {
       m.quiet = Math.max(0, m.quiet - 1)
-      this.emit('error', { message: 'sound-blocked', fatal: false })
+      // A clip that can't play at all isn't blocked sound: a YouTube video reports video-unavailable.
+      if (err?.name !== 'NotSupportedError') this.emit('error', { message: 'sound-blocked', fatal: false })
     })
   }
 

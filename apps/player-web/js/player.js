@@ -461,6 +461,7 @@ export class DeckcraftPlayer {
   }
 
   buildMedia (clips) {
+    this.releaseMedia()
     this.layer.replaceChildren()
     this.media = clips.map(clipData => {
       const yt = clipData.link ? youtubeVideo(clipData.link) : null
@@ -503,6 +504,15 @@ export class DeckcraftPlayer {
       this.layer.append(el.box ?? el)
       return clip
     })
+  }
+
+  // Clips being replaced or closed: their blob URLs, and their YouTube players and timers.
+  releaseMedia () {
+    for (const m of this.media) {
+      if (m.el.src.startsWith('blob:')) URL.revokeObjectURL(m.el.src)
+      m.el.destroy?.()
+    }
+    this.media = []
   }
 
   showMedia () {
@@ -576,10 +586,7 @@ export class DeckcraftPlayer {
     this.notes.cancel()
     this.resizeObserver?.disconnect()
     this.worker?.terminate()
-    for (const m of this.media) {
-      if (m.el.src.startsWith('blob:')) URL.revokeObjectURL(m.el.src)
-      m.el.destroy?.()
-    }
+    this.releaseMedia()
     this.container.replaceChildren()
   }
 }

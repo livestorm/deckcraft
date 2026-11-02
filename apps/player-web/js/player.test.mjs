@@ -400,3 +400,13 @@ test('a clip that cannot play is not reported as blocked sound', async () => {
   await settle()
   assert.deepEqual(p.errors, ['sound-blocked'])
 })
+
+test('opening media again lets go of the clips it replaces', () => {
+  const p = bareCanvasPlayer()
+  p.layer = { replaceChildren () {} }
+  let destroyed = 0
+  p.media = [{ el: { src: 'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ', destroy: () => { destroyed += 1 } } }]
+  p.buildMedia([])
+  assert.equal(destroyed, 1)
+  assert.deepEqual(p.media, [])
+})

@@ -131,6 +131,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-03 | Browser player: a presenter's seek in a clip's controls, YouTube's included, reaches every viewer as a media action; the player's own seeks (cues, trims, applying others' actions) aren't sent (npm 0.4.1) |
 | 2026-11-02 | Browser player: YouTube videos (PowerPoint's online video) play in YouTube's player over the slide, privacy-enhanced, following the deck's media effects and presenters' plays and pauses; YouTube loads only for decks that use it (npm 0.4.0) |
 | 2026-10-28 | Browser player: speaker notes for presenters. Slides keep their `.pptx` slide id (`file_id`), which a copy of the deck without hidden slides shares with the original, and `notesOf` reads the original's notes by that id while the presenter shows the copy (npm 0.3.0) |
 | 2026-10-27 | Media: a clip's volume, Loop until Stopped and Hide While Not Playing are read from and written to PPTX (`p:cMediaNode`, part of #74). The browser player starts the media of a slide's automatic first step when the deck opens or a jump lands on the slide (a waiting screen's background music was silent), and loops clips |

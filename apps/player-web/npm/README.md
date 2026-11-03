@@ -99,8 +99,9 @@ notes}]}` or `{type: 'notesError', message}`.
 
 A YouTube video inserted in PowerPoint (Insert > Video > Online Video) plays in YouTube's own
 player over the slide, in privacy-enhanced mode (`www.youtube-nocookie.com`). It follows the deck's
-media effects and `mediaAction` like any clip: with `controls`, YouTube's controls report plays and
-pauses as `mediaAction`, and everyone else's player follows. A start or end time in the link
+media effects and `mediaAction` like any clip: with `controls`, YouTube's controls report plays,
+pauses and seeks as `mediaAction`, and everyone else's player follows. (A seek is sent as the clip's
+`play` or `pause` at its new time, for any clip, so players before 0.4.1 follow it too.) A start or end time in the link
 (`?start=`, `?t=1m30s`, `?end=`) bounds the clip.
 
 YouTube's script loads only for a deck with a YouTube video, and each video's player is made the

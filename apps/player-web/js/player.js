@@ -14,7 +14,7 @@
 //
 // Events (p.on(name, fn)): ready(info), state({slide, step, animating}), metrics(m), error(err),
 // fonts({loaded: [{family, from}], missing: [family]}) with fontsBase,
-// mediaAction({shape, action, at}) when someone with controls plays or pauses a clip themselves.
+// mediaAction({shape, action, at}) when someone with controls plays, pauses or seeks a clip themselves.
 // A YouTube video (PowerPoint's online video) plays in YouTube's player, in privacy-enhanced mode;
 // one that can't play gives error({message: 'video-unavailable', fatal: false}).
 
@@ -85,11 +85,11 @@ export function loadYouTubeApi (win = globalThis, timeoutMs = 15000) {
 }
 
 // A YouTube video with the part of a media element's interface the player uses: play() and
-// pause(), paused, currentTime, duration, volume, loop, and the play, pause, timeupdate and ended
-// events (plus error). Its player is made the first time it's shown (mount). `api` gives the
+// pause(), paused, currentTime, duration, volume, loop, and the play, pause, timeupdate, seeked and
+// ended events (plus error). seeked is fired for a seek in YouTube's own controls only. Its player is made the first time it's shown (mount). `api` gives the
 // YouTube IFrame API; `box` is the element it's drawn in.
 export class YouTubeClip extends EventTarget {
-  constructor ({ id, box, api, endMs = 0 }) {
+  constructor ({ id, box, api, endMs = 0, now = () => performance.now() }) {
     super()
     this.id = id
     this.box = box
@@ -110,6 +110,8 @@ export class YouTubeClip extends EventTarget {
     this.startAt = null
     this.waiting = []
     this.timer = null
+    this.now = now
+    this.last = null // {t, at}: the video's time, and when it was read
   }
 
   get paused () { return this.paused_ }
@@ -125,6 +127,7 @@ export class YouTubeClip extends EventTarget {
       this.startAt = t
     } else {
       this.player.seekTo(t, true)
+      this.last = null
     }
   }
 
@@ -173,6 +176,8 @@ export class YouTubeClip extends EventTarget {
     if (this.seek !== null) this.currentTime = this.seek
     this.seek = null
     if (!this.paused_) player.playVideo()
+    this.timer = setInterval(() => this.tick(), 250)
+    this.timer.unref?.()
   }
 
   play () {
@@ -181,7 +186,10 @@ export class YouTubeClip extends EventTarget {
     if (this.paused_) {
       this.paused_ = false
       this.fire('play')
-      if (this.player && this.startAt !== null) this.player.seekTo(this.startAt, true)
+      if (this.player && this.startAt !== null) {
+        this.player.seekTo(this.startAt, true)
+        this.last = null
+      }
       this.player?.playVideo()
     }
     return new Promise((resolve, reject) => this.waiting.push({ resolve, reject }))
@@ -205,27 +213,35 @@ export class YouTubeClip extends EventTarget {
         this.paused_ = false
         this.fire('play')
       }
-      if (!this.timer) {
-        this.timer = setInterval(() => this.tick(), 250)
-        this.timer.unref?.()
-      }
-      return
-    }
-    this.stopTimer()
-    if (state === S.PAUSED && !this.paused_) {
+    } else if (state === S.PAUSED && !this.paused_) {
       this.paused_ = true
       this.fire('pause')
     } else if (state === S.ENDED) this.ended()
   }
 
   tick () {
+    this.watchSeek()
+    if (this.paused_) return
     this.fire('timeupdate')
-    if (this.end > 0 && !this.paused_ && this.currentTime >= this.end) this.ended()
+    if (this.end > 0 && this.currentTime >= this.end) this.ended()
+  }
+
+  // YouTube reports no seeks: one in its controls is a jump further than playing could move it.
+  watchSeek () {
+    const S = this.states
+    const t = this.player.getCurrentTime()
+    const at = this.now()
+    const last = this.last
+    this.last = [S.PLAYING, S.PAUSED, S.BUFFERING].includes(this.state) ? { t, at } : null
+    if (!last || !this.last) return
+    const most = (at - last.at) / 1000 * (this.player.getPlaybackRate?.() || 1)
+    if (t < last.t - 0.5 || t > last.t + most + 1) this.fire('seeked')
   }
 
   ended () {
     if (this.loop) {
       this.player.seekTo(0, true)
+      this.last = null
       this.player.playVideo()
       return
     }
@@ -488,22 +504,41 @@ export class DeckcraftPlayer {
         const step = trimStep(c, el.currentTime, el.duration)
         if (!step) return
         if (step.stop) return this.pause(clip)
-        el.currentTime = step.seek
+        this.seek(clip, step.seek)
         if (el.paused) this.play(clip)
       }
       el.addEventListener('timeupdate', trim)
       el.addEventListener('ended', trim)
-      if (this.controls) {
-        const report = action => () => {
-          if (clip.quiet > 0) clip.quiet -= 1
-          else this.emit('mediaAction', { shape: c.shape, action, at: el.currentTime })
-        }
-        el.addEventListener('play', report('play'))
-        el.addEventListener('pause', report('pause'))
-      }
+      if (this.controls) this.report(clip)
       this.layer.append(el.box ?? el)
       return clip
     })
+  }
+
+  // A presenter's own plays, pauses and seeks, for everyone else to follow: not the player's own. A
+  // seek is sent as what the clip is doing (play or pause) at its new time.
+  report (clip) {
+    const { el, shape } = clip
+    const send = action => this.emit('mediaAction', { shape, action, at: el.currentTime })
+    for (const action of ['play', 'pause']) {
+      el.addEventListener(action, () => {
+        if (clip.quiet > 0) clip.quiet -= 1
+        else send(action)
+      })
+    }
+    el.addEventListener('seeked', () => {
+      const own = clip.ownSeek
+      if (own && performance.now() < own.until && Math.abs(el.currentTime - own.t) < 0.25) return
+      if (el.loop && el.currentTime < 0.25) return // a video starting over by itself
+      send(el.paused ? 'pause' : 'play')
+    })
+  }
+
+  // A seek the player makes itself. Its seeked event can come late, or never (a clip not loaded
+  // yet), so it is recognised by its time for a few seconds rather than counted.
+  seek (m, t) {
+    m.ownSeek = { t, until: performance.now() + 3000 }
+    m.el.currentTime = t
   }
 
   // Clips being replaced or closed: their blob URLs, and their YouTube players and timers.
@@ -527,7 +562,7 @@ export class DeckcraftPlayer {
   stopMedia () {
     for (const m of this.media) {
       this.pause(m)
-      m.el.currentTime = (m.trimStartMs || 0) / 1000
+      this.seek(m, (m.trimStartMs || 0) / 1000)
     }
   }
 
@@ -536,13 +571,13 @@ export class DeckcraftPlayer {
     const m = this.clip(shape)
     if (!m) return
     if (action === 'play') {
-      m.el.currentTime = (m.trimStartMs || 0) / 1000
+      this.seek(m, (m.trimStartMs || 0) / 1000)
       this.play(m)
     } else if (action === 'pause') {
       m.el.paused ? this.play(m) : this.pause(m)
     } else {
       this.pause(m)
-      m.el.currentTime = (m.trimStartMs || 0) / 1000
+      this.seek(m, (m.trimStartMs || 0) / 1000)
     }
   }
 
@@ -550,7 +585,7 @@ export class DeckcraftPlayer {
   mediaAction ({ shape, action, at }) {
     const m = this.clip(shape)
     if (!m) return
-    if (Math.abs(m.el.currentTime - at) > 0.5) m.el.currentTime = at
+    if (Math.abs(m.el.currentTime - at) > 0.5) this.seek(m, at)
     action === 'play' ? this.play(m) : this.pause(m)
   }
 

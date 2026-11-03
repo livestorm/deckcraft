@@ -61,7 +61,7 @@ intermediate build that required inline `bytes` cannot read the new referenced r
 | Video: H.264, HEVC in MP4/MOV | yes | yes | Pure-Rust, software decode |
 | Video: VP9, AV1 in WebM/MKV | partly (OS codecs) | yes | Ahead of PowerPoint for Mac |
 | WMV | yes (Windows) | embedded, not playable | |
-| Online video (YouTube embeds) | yes | no | Cloud feature |
+| Online video (YouTube embeds) | yes | browser player only | The browser player plays YouTube links in YouTube's player (npm 0.4.0); elsewhere the poster shows |
 | Embedded OLE objects | yes | kept on round trip (opaque), not insertable or editable | `ShapeKind::Opaque` |
 | Embedded fonts | yes | yes | `p:embeddedFontLst` read and written. TrueType, OpenType and Embedded OpenType faces are used to draw; MicroType Express subsets are kept and written back, not drawn |
 | 3-D models (`.glb`) | yes | kept | The model part round-trips (`p:contentPart`, including an `mc:AlternateContent` choice and its fallback picture). Not drawn as a mesh and not inserted from the ribbon |

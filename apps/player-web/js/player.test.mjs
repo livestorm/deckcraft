@@ -469,6 +469,8 @@ class FakeMedia extends EventTarget {
     this.paused = true
     this.currentTime = 0
     this.loop = false
+    this.duration = 60
+    this.playbackRate = 1
   }
 
   play () { this.paused = false; return Promise.resolve() }
@@ -481,6 +483,7 @@ function presenterWithClip () {
   const p = bareCanvasPlayer()
   p.controls = true
   p.position = [0, 0]
+  p.clock = () => 1000
   const clip = { shape: 7, slide: 0, el: new FakeMedia(), quiet: 0 }
   p.media = [clip]
   p.report(clip)
@@ -497,7 +500,7 @@ test('a presenter\'s seek is sent with where the clip is and whether it plays', 
   el.paused = true
   el.currentTime = 3
   el.fire('seeked')
-  assert.deepEqual(sent, [{ shape: 7, action: 'play', at: 42 }, { shape: 7, action: 'pause', at: 3 }])
+  assert.deepEqual(sent, [{ shape: 7, action: 'play', at: 42, time: 1000 }, { shape: 7, action: 'pause', at: 3, time: 1000 }])
 })
 
 test('the player\'s own seeks are not sent: media actions, cues, and a video starting over', () => {
@@ -518,5 +521,133 @@ test('the player\'s own seeks are not sent: media actions, cues, and a video sta
   el.paused = false
   el.currentTime = 60
   el.fire('seeked')
-  assert.deepEqual(sent, [{ shape: 7, action: 'play', at: 60 }])
+  assert.deepEqual(sent, [{ shape: 7, action: 'play', at: 60, time: 1000 }])
+})
+
+test('a presenter\'s play and pause carry the time on the shared clock', () => {
+  const { el, sent } = presenterWithClip()
+  el.currentTime = 4
+  el.fire('play')
+  assert.deepEqual(sent, [{ shape: 7, action: 'play', at: 4, time: 1000 }])
+})
+
+// A viewer's player with one clip on the slide shown, and a shared clock the test sets, in ms.
+function viewerWithClip (clip = {}) {
+  const p = bareCanvasPlayer()
+  p.position = [0, 0]
+  const clock = { ms: 0 }
+  p.clock = () => clock.ms
+  const m = { shape: 7, slide: 0, el: new FakeMedia(), quiet: 0, ...clip }
+  p.media = [m]
+  return { p, m, el: m.el, clock }
+}
+
+test('a play that arrives late, or is handed to someone joining, starts where everyone else is', () => {
+  const { p, el, clock } = viewerWithClip()
+  clock.ms = 10000
+  p.mediaAction({ shape: 7, action: 'play', at: 20, time: 7000 })
+  assert.equal(el.currentTime, 23)
+  assert.equal(el.paused, false)
+  p.mediaAction({ shape: 7, action: 'pause', at: 30, time: 2000 })
+  assert.equal(el.currentTime, 30)
+  assert.equal(el.paused, true)
+})
+
+test('a media action without a time does what it always did, and is not corrected', () => {
+  const { p, m, el, clock } = viewerWithClip()
+  clock.ms = 10000
+  p.mediaAction({ shape: 7, action: 'play', at: 20 })
+  assert.equal(el.currentTime, 20)
+  clock.ms = 50000
+  p.sync()
+  assert.equal(el.currentTime, 20)
+  assert.equal(m.anchor, null)
+})
+
+test('a video a little off plays slightly faster or slower; one far off jumps, then is left to settle', () => {
+  const { p, el, clock } = viewerWithClip()
+  p.mediaAction({ shape: 7, action: 'play', at: 0, time: 0 })
+  clock.ms = 10000
+  el.currentTime = 10.05
+  p.sync()
+  assert.equal(el.playbackRate, 1)
+  el.currentTime = 10.3
+  p.sync()
+  assert.equal(el.playbackRate, 0.95)
+  el.currentTime = 9.7
+  p.sync()
+  assert.equal(el.playbackRate, 1.05)
+  el.currentTime = 12
+  p.sync()
+  assert.equal(el.currentTime, 10)
+  assert.equal(el.playbackRate, 1)
+  clock.ms = 12000
+  el.currentTime = 9 // still loading after the jump
+  p.sync()
+  assert.equal(el.currentTime, 9)
+  clock.ms = 14000
+  p.sync()
+  assert.equal(el.currentTime, 14)
+})
+
+test('YouTube, whose speed cannot be nudged, jumps only when more than a second off', () => {
+  const { p, el, clock } = viewerWithClip()
+  delete el.playbackRate
+  p.mediaAction({ shape: 7, action: 'play', at: 0, time: 0 })
+  clock.ms = 10000
+  el.currentTime = 10.8
+  p.sync()
+  assert.equal(el.currentTime, 10.8)
+  assert.equal('playbackRate' in el, false)
+  el.currentTime = 11.5
+  p.sync()
+  assert.equal(el.currentTime, 10)
+})
+
+test('a looping clip is followed round its loop, or its trim range', () => {
+  const { p, el, clock } = viewerWithClip({ loop: true })
+  el.loop = true
+  clock.ms = 30000
+  p.mediaAction({ shape: 7, action: 'play', at: 50, time: 0 })
+  assert.equal(el.currentTime, 20)
+  clock.ms = 70200
+  el.currentTime = 59.9 // about to start over: 0.3 s behind, not 59.7 ahead
+  p.sync()
+  assert.equal(el.currentTime, 59.9)
+  assert.equal(el.playbackRate, 1.05)
+
+  const trimmed = viewerWithClip({ loop: true, trimStartMs: 10000, trimEndMs: 10000 })
+  trimmed.clock.ms = 10000
+  trimmed.p.mediaAction({ shape: 7, action: 'play', at: 45, time: 0 })
+  assert.equal(trimmed.el.currentTime, 15)
+})
+
+test('a clip that would have ended by now is not started again', () => {
+  const { p, el, clock } = viewerWithClip()
+  el.currentTime = 50
+  clock.ms = 20000
+  p.mediaAction({ shape: 7, action: 'play', at: 50, time: 0 })
+  assert.equal(el.paused, true)
+  assert.equal(el.currentTime, 50)
+})
+
+test('paused clips are not corrected, and leaving the slide forgets the anchor', () => {
+  const { p, m, el, clock } = viewerWithClip()
+  p.mediaAction({ shape: 7, action: 'play', at: 0, time: 0 })
+  el.pause()
+  clock.ms = 10000
+  p.sync()
+  assert.equal(el.currentTime, 0)
+  p.stopMedia()
+  assert.equal(m.anchor, null)
+})
+
+test('a cue anchors the clip where it starts, on this viewer\'s clock', () => {
+  const { p, el, clock } = viewerWithClip()
+  clock.ms = 5000
+  p.cue(7, 'play')
+  clock.ms = 10000
+  el.currentTime = 3
+  p.sync()
+  assert.equal(el.currentTime, 5)
 })

@@ -131,6 +131,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-04 | Browser player: clips keep in step across viewers. A media action carries when it happened on a shared clock, so a late one or a newcomer starts where everyone is, and each second a drifting clip plays 5% faster or slower, or jumps when more than a second off (YouTube only jumps) (npm 0.5.0) |
 | 2026-11-03 | Browser player: a presenter's seek in a clip's controls, YouTube's included, reaches every viewer as a media action; the player's own seeks (cues, trims, applying others' actions) aren't sent (npm 0.4.1) |
 | 2026-11-02 | Browser player: YouTube videos (PowerPoint's online video) play in YouTube's player over the slide, privacy-enhanced, following the deck's media effects and presenters' plays and pauses; YouTube loads only for decks that use it (npm 0.4.0) |
 | 2026-10-28 | Browser player: speaker notes for presenters. Slides keep their `.pptx` slide id (`file_id`), which a copy of the deck without hidden slides shares with the original, and `notesOf` reads the original's notes by that id while the presenter shows the copy (npm 0.3.0) |

@@ -176,7 +176,7 @@ async function readyClip (opts = {}) {
   const yt = fakeYouTube()
   const clip = new YouTubeClip({ id: 'dQw4w9WgXcQ', box: fakeBox(), api: async () => yt, ...opts })
   const events = []
-  for (const e of ['play', 'pause', 'timeupdate', 'ended', 'error']) clip.addEventListener(e, () => events.push(e))
+  for (const e of ['play', 'pause', 'timeupdate', 'ended', 'error', 'seeked']) clip.addEventListener(e, () => events.push(e))
   clip.mount()
   await new Promise(resolve => setImmediate(resolve))
   yt.fire('onReady')
@@ -409,4 +409,114 @@ test('opening media again lets go of the clips it replaces', () => {
   p.buildMedia([])
   assert.equal(destroyed, 1)
   assert.deepEqual(p.media, [])
+})
+
+// A clip on a ready fake player whose clock the test moves, in ms.
+async function clockedClip () {
+  const clock = { ms: 0 }
+  const ready = await readyClip({ now: () => clock.ms })
+  return { ...ready, clock }
+}
+
+test('a seek in YouTube\'s own controls fires seeked, while playing or paused', async () => {
+  const { yt, clip, events, p, clock } = await clockedClip()
+  const at = (ms, time) => { clock.ms = ms; p.time = time; clip.tick() }
+  clip.play()
+  yt.fire('onStateChange', S.PLAYING)
+  at(0, 10)
+  at(250, 10.25)
+  yt.fire('onStateChange', S.BUFFERING)
+  at(2250, 10.25) // buffering: the time stands still
+  yt.fire('onStateChange', S.PLAYING)
+  at(2500, 10.5)
+  await settle()
+  assert.equal(events.includes('seeked'), false)
+  at(2750, 40)
+  await settle()
+  assert.equal(events.filter(e => e === 'seeked').length, 1)
+  clip.pause()
+  yt.fire('onStateChange', S.PAUSED)
+  at(3000, 40)
+  at(5000, 40)
+  at(5250, 5)
+  await settle()
+  assert.equal(events.filter(e => e === 'seeked').length, 2)
+  clip.destroy()
+})
+
+test('the clip\'s own seeks and loops fire no seeked', async () => {
+  const { yt, clip, events, p, clock } = await clockedClip()
+  const at = (ms, time) => { clock.ms = ms; p.time = time; clip.tick() }
+  clip.loop = true
+  clip.play()
+  yt.fire('onStateChange', S.PLAYING)
+  at(0, 10)
+  clip.currentTime = 80
+  at(250, 80)
+  at(500, 80.25)
+  yt.fire('onStateChange', S.ENDED) // the loop seeks to 0 and plays
+  yt.fire('onStateChange', S.PLAYING)
+  at(750, 0)
+  await settle()
+  assert.equal(events.includes('seeked'), false)
+  clip.destroy()
+})
+
+// A media element as the player sees it, with the events it fires.
+class FakeMedia extends EventTarget {
+  constructor () {
+    super()
+    this.paused = true
+    this.currentTime = 0
+    this.loop = false
+  }
+
+  play () { this.paused = false; return Promise.resolve() }
+  pause () { this.paused = true }
+  fire (type) { this.dispatchEvent(new Event(type)) }
+}
+
+// A presenter's player with one clip on the slide shown, and the media actions it sends.
+function presenterWithClip () {
+  const p = bareCanvasPlayer()
+  p.controls = true
+  p.position = [0, 0]
+  const clip = { shape: 7, slide: 0, el: new FakeMedia(), quiet: 0 }
+  p.media = [clip]
+  p.report(clip)
+  const sent = []
+  p.on('mediaAction', a => sent.push(a))
+  return { p, clip, el: clip.el, sent }
+}
+
+test('a presenter\'s seek is sent with where the clip is and whether it plays', () => {
+  const { el, sent } = presenterWithClip()
+  el.paused = false
+  el.currentTime = 42
+  el.fire('seeked')
+  el.paused = true
+  el.currentTime = 3
+  el.fire('seeked')
+  assert.deepEqual(sent, [{ shape: 7, action: 'play', at: 42 }, { shape: 7, action: 'pause', at: 3 }])
+})
+
+test('the player\'s own seeks are not sent: media actions, cues, and a video starting over', () => {
+  const { p, el, sent } = presenterWithClip()
+  el.currentTime = 10
+  p.mediaAction({ shape: 7, action: 'pause', at: 42 })
+  assert.equal(el.currentTime, 42)
+  el.fire('seeked')
+  p.cue(7, 'play')
+  el.fire('seeked')
+  p.stopMedia()
+  el.fire('seeked')
+  el.loop = true
+  el.currentTime = 0.1
+  el.fire('seeked')
+  assert.deepEqual(sent, [])
+  el.loop = false
+  el.paused = false
+  el.currentTime = 60
+  el.fire('seeked')
+  assert.deepEqual(sent, [{ shape: 7, action: 'play', at: 60 }])
 })

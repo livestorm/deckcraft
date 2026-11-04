@@ -95,21 +95,44 @@ browser: don't send them to other people through your own sync.
 Worker protocol: send `{type: 'notes', url}`; the worker answers `{type: 'notes', notes: [{fileId,
 notes}]}` or `{type: 'notesError', message}`.
 
+## Keeping media in step
+
+With `controls`, a presenter's play, pause or seek in a clip's controls is sent as
+`mediaAction({shape, action, at, time})`: the clip plays or pauses `at` seconds in, as of `time` on
+the player's `clock`. Pass each one to `player.mediaAction(a)` on every client, the presenter's
+included, and keep the latest one per clip to give someone who joins:
+
+- a playing clip starts where it has got to since `time`, so a late message or a newcomer lands
+  where everyone else is (a looping clip goes round its loop; one that would have ended stays put);
+- every second, a playing clip that has drifted is brought back: a video or audio clip up to a
+  second off plays 5% faster or slower until it is back, and one further off jumps. YouTube's speed
+  can't be nudged, so a YouTube video jumps when more than a second off;
+- leaving the slide forgets the clip's action; a media effect on the deck's timeline starts it
+  afresh on each client.
+
+`clock` (an option, or `player.clock = fn`) gives the time in milliseconds that every client
+shares. It is `Date.now` by default, which is only as close as the computers' clocks; give it the
+server's time, as each client last measured its offset from it, for viewers to keep within a
+fraction of a second. An action without `time` (from players before 0.5.0) is followed as before,
+and not kept in step.
+
 ## YouTube videos
 
 A YouTube video inserted in PowerPoint (Insert > Video > Online Video) plays in YouTube's own
 player over the slide, in privacy-enhanced mode (`www.youtube-nocookie.com`). It follows the deck's
 media effects and `mediaAction` like any clip: with `controls`, YouTube's controls report plays,
 pauses and seeks as `mediaAction`, and everyone else's player follows. (A seek is sent as the clip's
-`play` or `pause` at its new time, for any clip, so players before 0.4.1 follow it too.) A start or end time in the link
+`play` or `pause` at its new time, for any clip, so players before 0.4.1 follow it too.) A start or
+end time in the link
 (`?start=`, `?t=1m30s`, `?end=`) bounds the clip.
 
 YouTube's script loads only for a deck with a YouTube video, and each video's player is made the
 first time its slide shows. The page must allow `script-src https://www.youtube.com` and
 `frame-src https://www.youtube-nocookie.com`. A video that can't play (YouTube blocked, embedding
 disabled, video removed) gives `error` with `{message: 'video-unavailable', fatal: false}`, and its
-poster stays on the slide. Each viewer streams from YouTube, so viewers drift by up to a second or
-so, and YouTube may show them ads. Other online video services show their poster.
+poster stays on the slide. Each viewer streams from YouTube, and YouTube may show them ads: a video
+playing from a media action is brought back to the others within about a second once it plays
+again. Other online video services show their poster.
 
 The module needs WebAssembly SIMD (Chrome 91, Firefox 89, Safari 16.4).
 

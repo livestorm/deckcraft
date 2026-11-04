@@ -14,7 +14,10 @@
 //
 // Events (p.on(name, fn)): ready(info), state({slide, step, animating}), metrics(m), error(err),
 // fonts({loaded: [{family, from}], missing: [family]}) with fontsBase,
-// mediaAction({shape, action, at}) when someone with controls plays, pauses or seeks a clip themselves.
+// mediaAction({shape, action, at, time}) when someone with controls plays, pauses or seeks a clip
+// themselves; `time` is when, on `clock`. Pass every media action to p.mediaAction(a) on every
+// client, and hand the latest one per clip to someone joining: playing clips keep to it.
+// `clock` gives the time in ms that all clients share, best the server's: Date.now by default.
 // A YouTube video (PowerPoint's online video) plays in YouTube's player, in privacy-enhanced mode;
 // one that can't play gives error({message: 'video-unavailable', fatal: false}).
 
@@ -321,13 +324,14 @@ export class NotesRequest {
 }
 
 export class DeckcraftPlayer {
-  constructor (container, { base = '', workerUrl, glueUrl, wasmUrl, fonts = [], fontsBase = null, controls = false } = {}) {
+  constructor (container, { base = '', workerUrl, glueUrl, wasmUrl, fonts = [], fontsBase = null, controls = false, clock = () => Date.now() } = {}) {
     this.container = container
     this.base = base
     this.urls = { worker: workerUrl, glue: glueUrl, wasm: wasmUrl }
     this.fonts = fonts
     this.fontsBase = fontsBase
     this.controls = controls
+    this.clock = clock
     this.handlers = {}
     this.notes = new NotesRequest()
     this.info = null
@@ -338,6 +342,7 @@ export class DeckcraftPlayer {
     this.layer = document.createElement('div')
     this.layer.style.cssText = 'position:absolute;inset:0;pointer-events:none'
     container.style.position = container.style.position || 'relative'
+    this.syncTimer = setInterval(() => this.sync(), 1000)
     this.start()
   }
 
@@ -519,7 +524,10 @@ export class DeckcraftPlayer {
   // seek is sent as what the clip is doing (play or pause) at its new time.
   report (clip) {
     const { el, shape } = clip
-    const send = action => this.emit('mediaAction', { shape, action, at: el.currentTime })
+    const send = action => {
+      clip.anchor = { action, at: el.currentTime, time: this.clock() }
+      this.emit('mediaAction', { shape, ...clip.anchor })
+    }
     for (const action of ['play', 'pause']) {
       el.addEventListener(action, () => {
         if (clip.quiet > 0) clip.quiet -= 1
@@ -538,7 +546,9 @@ export class DeckcraftPlayer {
   // yet), so it is recognised by its time for a few seconds rather than counted.
   seek (m, t) {
     m.ownSeek = { t, until: performance.now() + 3000 }
+    m.jumped = this.clock()
     m.el.currentTime = t
+    if ('playbackRate' in m.el) m.el.playbackRate = 1
   }
 
   // Clips being replaced or closed: their blob URLs, and their YouTube players and timers.
@@ -563,6 +573,7 @@ export class DeckcraftPlayer {
     for (const m of this.media) {
       this.pause(m)
       this.seek(m, (m.trimStartMs || 0) / 1000)
+      m.anchor = null
     }
   }
 
@@ -579,14 +590,56 @@ export class DeckcraftPlayer {
       this.pause(m)
       this.seek(m, (m.trimStartMs || 0) / 1000)
     }
+    // Each client hears the cue at about the same moment, so its own clock anchors the clip.
+    m.anchor = { action: m.el.paused ? 'pause' : 'play', at: m.el.currentTime, time: this.clock() }
   }
 
-  // A clip played or paused by the presenter, `at` seconds in: every client does the same.
-  mediaAction ({ shape, action, at }) {
+  // A clip played or paused by the presenter, `at` seconds in at `time`: every client does the
+  // same, and a playing clip starts where it has got to since. Without a time (players before
+  // 0.5.0), it starts at `at` and isn't kept in step.
+  mediaAction ({ shape, action, at, time }) {
     const m = this.clip(shape)
     if (!m) return
-    if (Math.abs(m.el.currentTime - at) > 0.5) this.seek(m, at)
+    m.anchor = time == null ? null : { action, at, time }
+    const t = m.anchor ? this.target(m) : at
+    if (t == null) return this.pause(m)
+    if (Math.abs(m.el.currentTime - t) > 0.5) this.seek(m, t)
     action === 'play' ? this.play(m) : this.pause(m)
+  }
+
+  // Where a clip should be now, by its anchor: null when it would have ended by now. A looping
+  // clip goes round its trim range, or all of it.
+  target (m) {
+    const { action, at, time } = m.anchor
+    if (action === 'pause') return at
+    const t = at + Math.max(0, this.clock() - time) / 1000
+    const { start, end } = this.span(m)
+    if (!(end > start) || t < end) return t
+    return m.loop ? start + (t - start) % (end - start) : null
+  }
+
+  span (m) {
+    return { start: (m.trimStartMs || 0) / 1000, end: m.el.duration - (m.trimEndMs || 0) / 1000 }
+  }
+
+  // Every second, playing clips that have drifted from their anchor are brought back: a video a
+  // little off plays 5% faster or slower, and one over a second off jumps. YouTube's speed can't
+  // be nudged, so it only jumps. After a jump, a clip gets 3 s to load before it is checked again.
+  sync () {
+    const now = this.clock()
+    for (const m of this.media) {
+      if (m.anchor?.action !== 'play' || m.el.paused || m.slide !== this.position?.[0] || now - m.jumped < 3000) continue
+      const t = this.target(m)
+      if (t == null) continue
+      let drift = m.el.currentTime - t
+      const { start, end } = this.span(m)
+      if (m.loop && end > start) {
+        const s = end - start // just before the loop starts over is just behind, not far ahead
+        drift = ((drift + s / 2) % s + s) % s - s / 2
+      }
+      if (Math.abs(drift) > 1) this.seek(m, t)
+      else if ('playbackRate' in m.el) m.el.playbackRate = Math.abs(drift) < 0.1 ? 1 : drift > 0 ? 0.95 : 1.05
+    }
   }
 
   clip (shape) {
@@ -619,6 +672,7 @@ export class DeckcraftPlayer {
 
   destroy () {
     this.notes.cancel()
+    clearInterval(this.syncTimer)
     this.resizeObserver?.disconnect()
     this.worker?.terminate()
     this.releaseMedia()

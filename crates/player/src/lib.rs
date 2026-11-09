@@ -559,7 +559,7 @@ impl Player {
             m.text.iter().map(|x| TextMorph { old: x.old, new: x.new, from: x.from, to: x.to, chars: x.chars, t: m.mix }).collect();
         let paths: Vec<PathMorph> =
             m.paths.iter().map(|x| PathMorph { id: x.id, from: x.from.clone(), from_box: x.from_box, to_box: x.to_box, t: m.mix }).collect();
-        Some(render_blend(&self.pres, from, to, m.mix, &m.shapes, &text, &paths, &opts))
+        Some(render_blend(&self.pres, (from, to), m.mix, &m.shapes, &text, &paths, &opts))
     }
 
     fn scale(&self) -> f64 {

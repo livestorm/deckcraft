@@ -154,6 +154,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-09 | Browser player built on upstream DeckCraft 0.17.0: its reading and drawing of decks (paragraph builds with PowerPoint's clicks, picture placeholders cut to their layout's shape, tiled fills in groups, table and default text styles, symbol-font spacing, chart pattern fills and data labels) and upstream's reading of clip mute and full screen (npm 0.6.0) |
 | 2026-11-04 | Browser player: clips keep in step across viewers. A media action carries when it happened on a shared clock, so a late one or a newcomer starts where everyone is, and each second a drifting clip plays 5% faster or slower, or jumps when more than a second off (YouTube only jumps) (npm 0.5.0) |
 | 2026-11-04 | Ogg Opus recovery keeps trailing packets without granules in the total duration, matching their recovered positions; valid end trimming stays covered |
 | 2026-11-03 | Browser player: a presenter's seek in a clip's controls, YouTube's included, reaches every viewer as a media action; the player's own seeks (cues, trims, applying others' actions) aren't sent (npm 0.4.1) |

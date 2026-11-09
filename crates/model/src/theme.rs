@@ -118,6 +118,7 @@ pub fn default_format() -> FormatScheme {
             ],
             shape: GradientShape::Linear { angle: 90.0, scaled: false },
             rotate_with_shape: true,
+            flip: None,
         })
     };
     FormatScheme {

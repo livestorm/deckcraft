@@ -279,8 +279,8 @@ fn office_fonts_have_substitutes() {
     assert!(!is_monospace_family("Monoton"));
 
     assert_eq!(substitutes("Calibri"), &["Carlito", "Liberation Sans", "Arial", "Inter"]);
-    assert_eq!(substitutes("Arial"), &["Liberation Sans", "Arial", "Helvetica Neue", "Helvetica", "Inter"]);
-    assert_eq!(substitutes("Times New Roman"), &["Liberation Serif", "Times New Roman", "Times", "Merriweather"]);
+    assert_eq!(substitutes("Arial"), &["Liberation Sans", "Arimo", "Arial", "Helvetica Neue", "Helvetica", "Inter"]);
+    assert_eq!(substitutes("Times New Roman"), &["Liberation Serif", "Tinos", "Times New Roman", "Times", "Merriweather"]);
     assert_eq!(substitutes("Georgia"), &["Merriweather", "Liberation Serif", "Georgia"]);
     assert!(substitutes("Monotype Corsiva").is_empty());
     assert!(substitutes("Monoton").is_empty());

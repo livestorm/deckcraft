@@ -53,7 +53,7 @@ intermediate build that required inline `bytes` cannot read the new referenced r
 | Kind | PowerPoint | DeckCraft | Notes |
 |---|---|---|---|
 | PNG, JPEG, GIF (animated), BMP, TIFF, WebP | yes | yes | `image` 0.25; animated GIFs play since #39 |
-| SVG | yes (with PNG fallback) | **no** | The PNG fallback shows; SVG files can't be inserted |
+| SVG | yes (with PNG fallback) | yes | Rasterized (`resvg`). An icon's `asvg:svgBlip` is kept, and a PNG fallback is written beside it. Text is not drawn (no fonts are loaded). A `.svgz` is stored inflated |
 | EMF / WMF | yes | partial | Drawn as vectors (paths, pens, pattern and hatch brushes, bitmaps, text in the document's fonts with the file's character advances). Rectangle clip regions (`INTERSECTCLIPRECT`, `EXCLUDECLIPRECT`, `EXTSELECTCLIPRGN`) limit later drawing. EMF+ only pictures play every EMF+ drawing record (brushes incl. gradients and textures, pens, paths, curves, images, strings, transforms, clipping; see `crates/metafile/src/emfplus.rs` for the few exceptions). Legacy OLE objects (VML preview) and ActiveX controls show their pictures |
 | HEIC | yes (macOS) | no | |
 | Audio: MP3, AAC/M4A, ALAC, WAV, AIFF, CAF, FLAC, Ogg Vorbis, Opus | yes (Ogg/Opus partly) | yes | Pure-Rust decoders in `crates/media`, `crates/opus` |
@@ -119,19 +119,20 @@ the round trip even though DeckCraft doesn't model it.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | trivial | Reuse Slides transfers referenced custom table styles from native and PPTX sources; grouped tables, undo, native save/reopen and style-id conflicts are covered |
 | 2026-11-02 | minor | Optional table RTL direction is read and written as `a:tblPr/@rtl`; native and two PPTX saves preserve true, false and absent values with distinguishable column text |
 | 2026-11-02 | minor | Text runs preserve alternate-language metadata in native and PPTX round trips |
-| 2026-11-03 | trivial | Reuse Slides transfers referenced custom table styles from native and PPTX sources; grouped tables, undo, native save/reopen and style-id conflicts are covered |
-| 2026-10-27 | minor | Audio / video: volume, Loop until Stopped and Hide While Not Playing (`p:cMediaNode`) read and written; the rest of #74 stays open |
-| 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-11-02 | trivial | Reflection start position, affine scale/skew, direction and fade, alignment and rotation attributes survive native and PPTX saves; rendering remains partial |
+| 2026-10-27 | minor | Audio / video: volume, Loop until Stopped and Hide While Not Playing (`p:cMediaNode`) read and written; the rest of #74 stays open |
+| 2026-10-23 | minor | Chart text colour (`c:txPr` on the axes, legend, data labels and chart; the title's run defaults) is written as well as read, so an imported chart's colours survive an edit and a save; `chart.options {textColor}`, Font Color on a chart (#1015) |
+| 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
+| 2026-10-16 | minor | PNG slide export with a transparent background (#784) |
+| 2026-10-16 | trivial | A `.ppsx` opened from the command line or the file association starts the slide show (#862) |
 | 2026-10-15 | trivial | Native `.deckcraft` files serialize a nonempty chart `kept` sidecar (relationships, part names, content types and bytes). Older files without it still load; empty sidecars are omitted. Headless PPTX → edit → native save/reopen → PPTX checks keep the workbook and drawing bytes; editing chart data still drops the stale workbook |
 | 2026-10-15 | trivial | PPTX interactive timing sequences keep later On Click steps and paragraph click builds (`trigger_steps.rs`); mixed starts and independent buttons survive import/edit/save/reopen |
 | 2026-10-15 | minor | A `.pptx` slide that can't be read is reported instead of dropped in silence: `file.open` and `file.openBytes` return `lostSlides`, the app shows a message and opens a repaired copy (Save asks for a new name), and `deckcraft-cli` warns on stderr (#203) |
-| 2026-10-16 | minor | PNG slide export with a transparent background (#784) |
-| 2026-10-23 | minor | Chart text colour (`c:txPr` on the axes, legend, data labels and chart; the title's run defaults) is written as well as read, so an imported chart's colours survive an edit and a save; `chart.options {textColor}`, Font Color on a chart (#1015) |
-| 2026-10-16 | trivial | A `.ppsx` opened from the command line or the file association starts the slide show (#862) |
 | 2026-10-15 | minor | `.thmx` row: Browse for Themes reads a theme's colours, fonts and effects; a `.pptx`/`.potx` brings its slide master and layouts (#807) |
+| 2026-10-13 | minor | SVG pictures rasterize; an icon's svgBlip round-trips with a PNG fallback (#297) |
 | 2026-10-14 | minor | Community PR wave folded: one row each for `.pptx` (seven owned corpus files), outline, 3-D models, embedded fonts, text, effects, 3-D (extrusion sides draw now), SmartArt (written as a diagram) and VBA (tags and custom XML are kept) |
 | 2026-10-12 | minor | SmartArt import lays each shape's text out on its `dsp:txXfrm` text rectangle instead of the shape box |
 | 2026-10-13 | minor | EMF/WMF rectangle clip regions limit later drawing; EMF+ records remain |

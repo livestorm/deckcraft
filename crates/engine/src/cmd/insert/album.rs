@@ -289,7 +289,7 @@ fn album_items(p: &Value) -> Result<Vec<AlbumItem>> {
         if !ct.starts_with("image/") {
             return Err(bad("insert.photoAlbum", format!("{name} is not a picture")));
         }
-        if ct != "image/svg+xml" && deckcraft_render::decode_image(&bytes).is_none() {
+        if deckcraft_render::decode_image(&bytes).is_none() {
             return Err(bad("insert.photoAlbum", format!("{name}: the picture can't be read")));
         }
         let (px_w, px_h) = image_px(&bytes);

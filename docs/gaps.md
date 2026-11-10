@@ -105,14 +105,13 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Impact:** a deck opened and saved silently loses show behaviour.
 - **Estimate:** 1–3 h. **Beta blocker.**
 
-### SVG pictures don't render
-- **Evidence:** `crates/render/src/images.rs` decodes through `image` 0.25 (PNG, JPEG, WebP, GIF,
-  TIFF, BMP), and EMF/WMF through `deckcraft-metafile` (ported from WordCraft: paths, fills, pens,
-  pattern and hatch brushes, bitmaps and text; rectangle clip regions are applied, EMF+ only
-  pictures play their EMF+ records).
-  Nothing reads SVG; PowerPoint's Insert Icons stores SVG with a PNG fallback.
-- **Impact:** SVG icons show only their raster fallback, and SVG files can't be inserted.
-- **Estimate:** 4–8 h (an SVG renderer through `resvg`-style crates).
+### SVG text isn't drawn
+- **Evidence:** SVG pictures rasterize (`crates/svg`, `resvg`): an inserted `.svg` draws, and a
+  PowerPoint icon's `asvg:svgBlip` is the picture that round-trips, with a PNG fallback written
+  beside it. Text in an SVG is not drawn: no fonts are loaded. A `.svgz` is stored as SVG markup.
+  EMF/WMF draw through `deckcraft-metafile`, with rectangle clip regions applied.
+- **Impact:** an SVG with text draws without it.
+- **Estimate:** 2–4 h.
 
 ### Macro-enabled variants aren't recognized
 - **Evidence:** `.pptx`, `.potx` and `.ppsx` open and save with their own main content types
@@ -379,18 +378,19 @@ Detail in [localization-parity.md](localization-parity.md).
 | 2026-10-30 | minor | Slide-show click targets use each shape’s own animation state; scale and rotation test added |
 | 2026-10-28 | trivial | Automatic lists now run independently of Replace text as you type; proofing gap description updated |
 | 2026-10-27 | minor | Refreshed against merged PRs: removed the Morph alignment entry (#67 merged 2026-10-14); #77 (animation rewind, PR #83) is fixed, leaving #74 in the round-trip gap; #75 was closed unmerged, so #60 stays open with no fix PR; #53 is closed and the image-paste gap is now Windows #1414; Reuse Slides (#1103) and Compare reject (#850) noted in the smaller rows; the duplicate header line is gone |
+| 2026-10-27 | minor | Part of #74: a clip's volume, Loop until Stopped and Hide While Not Playing round-trip; gap #3 narrowed to Play Across Slides, rewind, full-screen video and animation rewind (#77), estimate 2–4 h → 1–3 h |
 | 2026-10-25 | trivial | New entries: copying text and cell ranges (no media, no table), a control-server timing test that may fail under load; Proofing notes that automatic lists follow Replace text as you type and that Backspace puts the typed lead back |
 | 2026-10-24 | trivial | AutoFormat starts bulleted and numbered lists as you type (`* `, `-- `, `> `, `1. `, `a) ` and the rest), with an AutoCorrect option to turn it off |
-| 2026-10-22 | minor | Animation Pane ▸ Play From starts the preview at the selected effect; gap 10 keeps the effect gallery (7–13 h) |
 | 2026-10-24 | trivial | Columns dialog (number and spacing of text columns); dialog count 41 → 42 |
+| 2026-10-22 | minor | Animation Pane ▸ Play From starts the preview at the selected effect; gap 10 keeps the effect gallery (7–13 h) |
 | 2026-10-20 | trivial | Explicit empty chart number-format sections hide their values; blank whole-code General fallback is retained. Synthetic formatter regressions; chart-element scores and readiness estimates unchanged |
-| 2026-10-27 | minor | Part of #74: a clip's volume, Loop until Stopped and Hide While Not Playing round-trip; gap #3 narrowed to Play Across Slides, rewind, full-screen video and animation rewind (#77), estimate 2–4 h → 1–3 h |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
+| 2026-10-16 | trivial | AutoFormat superscripts ordinals (1st, 22nd) as you type, with an AutoCorrect option to turn it off; automatic bulleted lists remain |
 | 2026-10-15 | trivial | Native saves retain chart package parts and relationships, including charts in groups; edited chart data still does not export a stale source workbook. Chart editing gaps and scores remain unchanged |
 | 2026-10-15 | trivial | PPTX trigger sequences keep later On Click steps instead of converting them to After Previous; mixed starts, independent buttons and paragraph builds have synthetic round-trip regressions |
-| 2026-10-16 | trivial | AutoFormat superscripts ordinals (1st, 22nd) as you type, with an AutoCorrect option to turn it off; automatic bulleted lists remain |
 | 2026-10-15 | minor | Edit Points: Straight/Curved Segment on a right-clicked segment and Open/Close Path on a point (`shape.segmentType`, `shape.openPath`, `shape.closePath`); left: Delete Segment and Add Point in the menu |
 | 2026-10-15 | trivial | Compare: slide-level Reject and Reject All landed; the entry keeps per-object accept and reject and the slide markers |
+| 2026-10-13 | minor | SVG pictures rasterize and round-trip (`#297`); the picture gap left here is SVG text |
 | 2026-10-14 | trivial | Fixed #718: remote MCP no longer accepts unrelated or buffered stale success; loopback regressions cover invalid envelopes, incomplete and oversized frames |
 | 2026-10-14 | minor | Community PR wave folded: one entry each for the soak tests (engine and UI), the PPTX corpus (seven owned corpus files), edit points / text warp / 3-D, proofing (Hunspell spelling, thesaurus, AutoCorrect), the smaller missing rows, dialogs (41 vs ~60; Print and Insert Object left) and pen/trackpad input; ranked rows 3, 4 and 10 de-duplicated (comment threads #70 and the pane timeline are done); the fixed command-palette entry (#79) removed |
 | 2026-10-13 | minor | EMF/WMF rectangle clip regions (`INTERSECTCLIPRECT`, `EXCLUDECLIPRECT`, `EXTSELECTCLIPRGN`) limit later drawing. EMF+ records remain |

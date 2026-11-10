@@ -1,0 +1,16 @@
+[package]
+name = "deckcraft-svg"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Rasterize SVG pictures for slides and for the PNG PowerPoint keeps beside an icon"
+
+[lints]
+workspace = true
+
+[dependencies]
+flate2 = "1.1.10"
+image = { workspace = true }
+# No text: SVG text is not drawn (no fonts are loaded), and the feature's font stack adds about
+# 1.5 MB to the browser player's wasm.
+resvg = { version = "0.48.1", default-features = false, features = ["raster-images", "svgz"] }

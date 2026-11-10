@@ -112,7 +112,8 @@ impl WebPlayer {
         self.inner.jump(to_pos(slide, step));
     }
 
-    /// Animate to `[slide, step]` when it is one click ahead, else jump; `now` in seconds.
+    /// Animate to `[slide, step]` when it is one click ahead, or back to the previous slide (its
+    /// transition reversed), else jump; `now` in seconds.
     pub fn advance(&mut self, slide: u32, step: u32, now: f64) {
         self.inner.advance(to_pos(slide, step), now);
     }

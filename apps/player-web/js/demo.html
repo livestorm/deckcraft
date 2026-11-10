@@ -65,7 +65,7 @@ player.on('fonts', f => { window.metrics.fonts = f; log('fonts', f) })
 player.on('mediaAction', a => log('mediaAction', a))
 
 $('next').onclick = () => { player.advance(player.nextOf(player.position)); show() }
-$('prev').onclick = () => { player.jump(player.prevOf(player.position)); show() }
+$('prev').onclick = () => { player.advance(player.prevOf(player.position)); show() }
 document.addEventListener('keydown', e => {
   if (e.key === 'ArrowRight' || e.key === ' ') $('next').click()
   if (e.key === 'ArrowLeft') $('prev').click()

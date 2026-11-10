@@ -6,7 +6,7 @@
 //!   share the position alone and every viewer renders it locally.
 //! - [`Player::jump`] shows a position at rest; [`Player::advance`] plays the animation from the
 //!   current position to the next one (a click step, or the next slide's transition and its
-//!   automatic first step).
+//!   automatic first step), and back to the previous slide (the left slide's transition, reversed).
 //! - [`Player::frame`] returns the picture at a moment of the show as straight RGBA, and the media
 //!   effects (Play, Pause, Stop) the show reached, for the host page to carry out.
 //!
@@ -156,6 +156,9 @@ struct TransitionRun {
     parts: Option<SlideParts>,
     /// The new slide's automatic first step plays once the transition ends.
     then_auto: bool,
+    /// Going back: the left slide's transition runs from its end to its start, the two slides
+    /// trading parts, as PowerPoint plays it.
+    reverse: bool,
     /// The pictures were handed to the host (GPU transitions).
     textures_sent: bool,
 }
@@ -331,13 +334,21 @@ impl Player {
     }
 
     /// Go to `target`, playing the animation when it is exactly one click ahead of the current
-    /// position ([`Player::next_of`]); anything else is a [`Player::jump`]. `now` is in seconds,
-    /// on the clock later passed to [`Player::frame`].
+    /// position ([`Player::next_of`]), or the transition reversed when it is the previous slide
+    /// Back goes to ([`Player::prev_of`]); anything else, undoing a click included, is a
+    /// [`Player::jump`]. `now` is in seconds, on the clock later passed to [`Player::frame`].
     pub fn advance(&mut self, target: Pos, now: f64) {
         let target = self.clamp(target);
         // Finish what is playing first, so a fast presenter never leaves a client behind.
         self.settle();
         if self.next_of(self.pos) != Some(target) {
+            if target.slide != self.pos.slide && self.prev_of(self.pos) == Some(target) {
+                let from = self.pos;
+                self.entry_media = true;
+                self.pos = target;
+                self.start_transition(Some(from), target, now, true);
+                return;
+            }
             self.jump(target);
             return;
         }
@@ -346,9 +357,9 @@ impl Player {
             self.pos = target;
             return;
         }
-        let from = self.pos.slide;
+        let from = Pos { slide: self.pos.slide, step: self.steps(self.pos.slide) };
         self.pos = target;
-        self.start_transition(Some(from), target, now);
+        self.start_transition(Some(from), target, now, false);
     }
 
     /// The picture at `now`, and the media cues reached since the last call.
@@ -450,12 +461,16 @@ impl Player {
         self.step = Some(StepRun { step, start: now, duration, cued: f64::NEG_INFINITY });
     }
 
-    fn start_transition(&mut self, from: Option<usize>, target: Pos, now: f64) {
-        let then_auto = target.step > 0 && self.auto_first(target.slide);
+    /// From the slide left (as it is shown) to `target`. Forward, the target's transition plays
+    /// into its first picture; back, the left slide's own transition plays reversed into the
+    /// target as `target` shows it.
+    fn start_transition(&mut self, from: Option<Pos>, target: Pos, now: f64, reverse: bool) {
+        let then_auto = !reverse && target.step > 0 && self.auto_first(target.slide);
+        let by = if reverse { from.map_or(target.slide, |f| f.slide) } else { target.slide };
         let (kind, option, duration) = self
             .pres
             .slides
-            .get(target.slide)
+            .get(by)
             .and_then(|s| s.transition.as_ref())
             .map(|t| (t.kind.clone(), t.option.clone(), t.duration_ms as f64 / 1000.0))
             .unwrap_or_else(|| ("none".into(), String::new(), 0.0));
@@ -465,11 +480,11 @@ impl Player {
             }
             return;
         }
-        let old = from.map(|i| {
-            let steps = self.steps(i);
-            self.render(i, steps, 0.0)
-        });
-        let new = self.render(target.slide, 0, 0.0);
+        let old = from.map(|f| self.render(f.slide, f.step, 0.0));
+        let new = self.render(target.slide, if reverse { target.step } else { 0 }, 0.0);
+        let from = from.map(|f| f.slide);
+        // A Morph from the slide left to the one come back to already is the reversed Morph.
+        let reverse = reverse && kind != "morph";
         let parts = if uses_slide_parts(&kind, &option) {
             let scale = self.scale();
             let opts = RenderOpts { scale, size: Some((self.width, self.height)), ..Default::default() };
@@ -477,7 +492,7 @@ impl Player {
         } else {
             None
         };
-        self.transition = Some(TransitionRun { from, kind, option, start: now, duration, old, new, parts, then_auto, textures_sent: false });
+        self.transition = Some(TransitionRun { from, kind, option, start: now, duration, old, new, parts, then_auto, reverse, textures_sent: false });
     }
 
     fn transition_frame(&self, p: f64) -> Frame {
@@ -488,7 +503,7 @@ impl Player {
         {
             return to_frame(&img);
         }
-        let layers = transition_frame(&tr.kind, &tr.option, p, self.aspect());
+        let layers = run_layers(tr, p, self.aspect());
         to_frame(&composite_transition(tr.old.as_ref(), &tr.new, tr.parts.as_ref(), &layers))
     }
 
@@ -505,7 +520,7 @@ impl Player {
             _ => parts.is_some(),
         };
         let mut layers = Vec::new();
-        for l in transition_frame(&tr.kind, &tr.option, p, aspect) {
+        for l in run_layers(tr, p, aspect) {
             const BLACK: [f32; 3] = [0.0, 0.0, 0.0];
             let (texture, color) = match l.source {
                 Source::Old => (has(0).then_some(0), BLACK),
@@ -606,6 +621,28 @@ fn media_action(effect: &str) -> &'static str {
 fn progress(now: f64, start: f64, duration: f64) -> f64 {
     let p = (now - start) / duration.max(0.01);
     if p.is_finite() { p.clamp(0.0, 1.0) } else { 1.0 }
+}
+
+/// The layers of a transition at progress `p`. Reversed (going back), it runs from its end to its
+/// start, so the slide being left plays the part of the new slide and the slide come back to the
+/// part of the old one.
+fn run_layers(tr: &TransitionRun, p: f64, aspect: f64) -> Vec<deckcraft_anim::Layer> {
+    if !tr.reverse {
+        return transition_frame(&tr.kind, &tr.option, p, aspect);
+    }
+    let mut layers = transition_frame(&tr.kind, &tr.option, 1.0 - p, aspect);
+    for l in &mut layers {
+        l.source = match l.source {
+            Source::Old => Source::New,
+            Source::New => Source::Old,
+            Source::OldBack => Source::NewBack,
+            Source::NewBack => Source::OldBack,
+            Source::OldContent => Source::NewContent,
+            Source::NewContent => Source::OldContent,
+            Source::Black | Source::White => l.source,
+        };
+    }
+    layers
 }
 
 fn to_frame(img: &Image) -> Frame {

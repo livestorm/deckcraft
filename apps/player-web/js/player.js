@@ -8,6 +8,7 @@
 // fonts it uses, before its first slide is drawn. `fonts` are added up front either way.
 //   await p.open(url)
 //   p.advance(p.nextOf(p.position)) // a click
+//   p.advance(p.prevOf(p.position)) // Back: to the previous slide, its transition plays reversed
 //   p.jump(pos)                     // a jump, at rest
 //   await p.notesOf(originalUrl)    // presenters: Map of file slide id → notes of another deck;
 //                                   // the current slide's is info.slides[k].fileId

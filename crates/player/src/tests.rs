@@ -159,6 +159,95 @@ fn gpu_transitions_hand_out_layers_and_their_pictures_once() {
     assert!(second.textures.is_none(), "pictures are handed out once");
 }
 
+/// Slides `a` then `b` in show order, where `b` comes in with a directional transition (push or
+/// wipe, so its frames differ forwards and backwards) and has no automatic first step; and that
+/// transition's length in seconds.
+fn slides_with_a_transition(p: &Player) -> (usize, usize, f64) {
+    p.order
+        .windows(2)
+        .find_map(|w| {
+            let (a, b) = (*w.first()?, *w.get(1)?);
+            let t = p.pres.slides.get(b)?.transition.as_ref()?;
+            (matches!(t.kind.as_str(), "push" | "wipe") && t.duration_ms > 0 && !p.auto_first(b)).then_some((a, b, t.duration_ms as f64 / 1000.0))
+        })
+        .expect("the sample has a push or wipe transition")
+}
+
+#[test]
+fn back_plays_the_left_slides_transition_in_reverse() {
+    // As PowerPoint does: Back from b to a plays b's own transition from its end to its start, so
+    // each moment of it is the forward transition's picture at the mirrored moment.
+    let (a, b, dur) = slides_with_a_transition(&sample());
+    let mut fwd = sample();
+    fwd.jump(Pos { slide: a, step: fwd.steps(a) });
+    fwd.frame(0.0);
+    fwd.advance(fwd.entry(b), 10.0);
+    let forward = fwd.frame(10.0 + 0.3 * dur).frame.expect("a forward frame");
+
+    let mut back = sample();
+    back.jump(back.entry(b));
+    back.frame(0.0);
+    let target = back.prev_of(back.position()).expect("a slide before");
+    assert_eq!(target.slide, a);
+    back.advance(target, 10.0);
+    assert!(back.animating(), "Back to the previous slide plays");
+    let reversed = back.frame(10.0 + 0.7 * dur).frame.expect("a reversed frame");
+    assert!(reversed.rgba == forward.rgba, "Back at 70% is the forward transition at 30%");
+    let mut now = 10.0 + 0.7 * dur;
+    let rested = play_to(&mut back, target, &mut now);
+    assert_eq!(back.position(), target);
+    let mut jumper = sample();
+    jumper.jump(target);
+    let jumped = jumper.frame(0.0).frame.expect("picture after a jump");
+    assert!(rested.rgba == jumped.rgba, "it ends on the previous slide fully built");
+}
+
+#[test]
+fn back_within_a_slide_and_other_jumps_do_not_play() {
+    let mut p = sample();
+    let built = *walk(&p).iter().find(|pos| pos.step > usize::from(p.auto_first(pos.slide))).expect("a click build");
+    p.jump(built);
+    p.frame(0.0);
+    let undo = p.prev_of(built).expect("undo the click");
+    assert_eq!(undo.slide, built.slide);
+    p.advance(undo, 1.0);
+    assert!(!p.animating(), "undoing a click shows the slide at rest");
+    let (a, b, _) = slides_with_a_transition(&p);
+    p.jump(Pos { slide: b, step: p.steps(b) });
+    p.advance(p.entry(a), 2.0);
+    assert!(!p.animating(), "the previous slide at its start is not where Back goes, so it is a jump");
+}
+
+#[test]
+fn back_hands_gpu_hosts_the_reversed_layers() {
+    let (a, b, dur) = slides_with_a_transition(&sample());
+    let layers = |p: &mut Player, to: Pos, at: f64| {
+        p.set_gpu_transitions(true);
+        p.frame(0.0);
+        p.advance(to, 1.0);
+        p.frame(1.0 + at * dur).transition.expect("a transition frame").layers
+    };
+    let mut fwd = sample();
+    fwd.jump(Pos { slide: a, step: fwd.steps(a) });
+    let to = fwd.entry(b);
+    let forward = layers(&mut fwd, to, 0.3);
+    let mut back = sample();
+    back.jump(back.entry(b));
+    let to = Pos { slide: a, step: back.steps(a) };
+    let reversed = layers(&mut back, to, 0.7);
+    // The same geometry, with the old (slot 0) and new (slot 1) pictures trading places.
+    let swap = |t: Option<usize>| match t {
+        Some(0) => Some(1),
+        Some(1) => Some(0),
+        other => other,
+    };
+    assert_eq!(forward.len(), reversed.len());
+    for (f, r) in forward.iter().zip(&reversed) {
+        assert_eq!(swap(f.texture), r.texture);
+        assert_eq!(f.vertices, r.vertices);
+    }
+}
+
 mod font_requests {
     use std::collections::BTreeSet;
 

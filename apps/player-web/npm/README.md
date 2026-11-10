@@ -24,6 +24,9 @@ import wasmUrl from '@livestorm/deckcraft-player/deckcraft_player_bg.wasm?url'
 const player = new DeckcraftPlayer(container, { workerUrl, glueUrl, wasmUrl, fontsBase: FONTS_CDN })
 player.on('fonts', ({ loaded, missing }) => console.log(loaded, missing))
 await player.open(deckUrl)
+player.advance(player.nextOf(player.position)) // a click: the next step or slide, animated
+player.advance(player.prevOf(player.position)) // Back: to the previous slide, its transition reversed
+player.jump(position)                           // anything else, shown at rest
 ```
 
 ## Fonts

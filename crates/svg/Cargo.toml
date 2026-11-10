@@ -11,5 +11,6 @@ workspace = true
 [dependencies]
 flate2 = "1.1.10"
 image = { workspace = true }
-# No system-font or memmap features: those need fontconfig and do not build for wasm.
-resvg = { version = "0.48.1", default-features = false, features = ["text", "raster-images", "svgz"] }
+# No text: SVG text is not drawn (no fonts are loaded), and the feature's font stack adds about
+# 1.5 MB to the browser player's wasm.
+resvg = { version = "0.48.1", default-features = false, features = ["raster-images", "svgz"] }

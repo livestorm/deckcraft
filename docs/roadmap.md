@@ -79,7 +79,7 @@ From the local execution plan (`plan/execution-plan.md`, gitignored). Status as 
 | M2 | PPTX import/export | done for generated decks | real-deck corpus, round-trip losses |
 | M3 | Shapes complete | mostly | edit points, Format Shape pane depth, bevel/3-D |
 | M4 | Design | mostly | Notes/Handout masters, variants, Designer |
-| M5 | Pictures and media | mostly | SVG/EMF, remove background, compress, icons, WMA/WMV |
+| M5 | Pictures and media | mostly | EMF clip regions, remove background, compress, icons, WMA/WMV |
 | M6 | Transitions and animations | mostly | Animation Pane timeline, remaining effects, transition sounds |
 | M7 | Slide show | mostly | second-display placement, laser, record |
 | M8 | Tables and charts | partly | chart data grid, elements, chartex types, draw table |
@@ -117,6 +117,7 @@ plan above.
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-15 | trivial | Native save/reopen retains imported chart workbooks and related parts; headless command tests cover a PPTX → native → PPTX cycle and stale-workbook rejection. Milestone scope and scores unchanged |
 | 2026-10-15 | trivial | PPTX trigger click steps survive save, including by-paragraph builds. Interactive-deck gaps remain media actions, audio triggers and click-box geometry; milestone scope and feature scores unchanged |
+| 2026-10-13 | trivial | SVG pictures left the beta picture row; SVG text remains |
 | 2026-10-14 | trivial | M13 reliability: remote MCP validates IDs and envelopes, caps replies and rejects incomplete frames; #718 |
 | 2026-10-14 | minor | Community PR wave folded: one Review gate row, one Current focus item 2, one beta row each for items 9 and 10 (timeline and timer controls are in), one after-beta paragraph, one M9 and M10 row, one corpus row in the 2026-10-07 history |
 | 2026-10-13 | trivial | Beta item 3: embedded fonts are in, except MicroType Express subsets |

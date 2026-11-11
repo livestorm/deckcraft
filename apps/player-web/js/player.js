@@ -21,6 +21,21 @@
 // `clock` gives the time in ms that all clients share, best the server's: Date.now by default.
 // A YouTube video (PowerPoint's online video) plays in YouTube's player, in privacy-enhanced mode;
 // one that can't play gives error({message: 'video-unavailable', fatal: false}).
+//
+// Links in the deck: the pointer turns into a hand over a link that does something for this viewer,
+// and a click on one emits link(e) instead of reaching the page's own click handlers:
+//   e.target: {type: 'url', url} (http, https, mailto or tel only), {type: 'slide', index,
+//     fileId}, or {type: 'nextSlide' | 'previousSlide' | 'firstSlide' | 'lastSlide' | 'endShow'}
+//   e.position: where a slide target goes ([slide, step]), null when nowhere in this show
+//   e.moves: the player moves there itself (a slide target, with `controls`)
+//   e.shape, e.text, e.label, e.tooltip; e.preventDefault() stops what follows
+// Then, unless prevented, a URL opens in a new tab (noopener, noreferrer) and, with `controls`, a
+// slide target moves the deck like advance(e.position). Without `controls` a slide target is only
+// reported. endShow is left to the page. Each link also gets a transparent, focusable, labelled
+// <a> over it, so keyboards and screen readers reach it (slide targets with `controls` only).
+// p.links holds the current slide's links ({target, shape, text, rect, quad, tooltip, label}, in
+// fractions of the slide); p.linkAt(x, y) resolves to the one a click there follows, or null.
+// Clicks on clips' own controls go to the clips, as before.
 
 // What a clip does at `time` seconds of `duration`: null to carry on, else `{seek}` (back to its
 // trim start, looping) or `{stop}`. Untrimmed clips are left to the media element and its own
@@ -287,6 +302,110 @@ export class YouTubeClip extends EventTarget {
   }
 }
 
+// The longest URL a link may have, as the worker's own limit.
+export const MAX_URL_LENGTH = 2048
+
+// `url` trimmed when a link may open it: http and https with a host, mailto and tel. null for
+// anything else (javascript:, data:, file:, relative or malformed). The worker filters the same
+// way; this is the page's own check before it opens anything.
+export function safeLinkUrl (url) {
+  if (typeof url !== 'string') return null
+  const u = url.trim()
+  if (!u || u.length > MAX_URL_LENGTH || /[\s\u0000-\u001f\u007f-\u009f]/.test(u)) return null
+  let parsed
+  try { parsed = new URL(u) } catch { return null }
+  const rest = u.slice(u.indexOf(':') + 1)
+  switch (parsed.protocol) {
+    case 'http:':
+    case 'https:': {
+      // The host as written: the parser makes one up for 'https:///x'.
+      const host = rest.startsWith('//') ? rest.slice(2).split(/[/?#]/)[0] : ''
+      return host && !/^[@:]/.test(host) && parsed.hostname ? u : null
+    }
+    case 'mailto:': return rest ? u : null
+    case 'tel:': return /^[A-Za-z0-9+\-.()*#;=,/%]+$/.test(rest) ? u : null
+    default: return null
+  }
+}
+
+// Is (x, y) inside the convex quadrilateral `quad` ([[x, y] × 4]), edges included?
+export function insideQuad (quad, x, y) {
+  if (!Array.isArray(quad) || quad.length !== 4) return false
+  const cross = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+  const area = cross(quad[0], quad[1], quad[2]) + cross(quad[0], quad[2], quad[3])
+  if (!(Math.abs(area) > 1e-12)) return false
+  const p = [x, y]
+  return quad.every((a, i) => cross(a, quad[(i + 1) % 4], p) * Math.sign(area) >= -1e-12)
+}
+
+// Where a link's slide target goes in the show `slides` (info.slides) from `position`: a slide is
+// entered as a click would enter it; Previous goes to the slide before, fully built. null for a
+// target that isn't a slide, or a slide that isn't in the show.
+export function linkDestination (target, slides, position) {
+  const entry = s => [s.index, s.autoFirst ? 1 : 0]
+  const k = slides.findIndex(s => s.index === position?.[0])
+  switch (target?.type) {
+    case 'slide': {
+      const s = slides.find(x => x.index === target.index)
+      return s ? entry(s) : null
+    }
+    case 'firstSlide': return slides.length ? entry(slides[0]) : null
+    case 'lastSlide': return slides.length ? entry(slides[slides.length - 1]) : null
+    case 'nextSlide': return k >= 0 && slides[k + 1] ? entry(slides[k + 1]) : null
+    case 'previousSlide': return k > 0 ? [slides[k - 1].index, slides[k - 1].steps] : null
+    default: return null
+  }
+}
+
+// What a link's anchor is called: the linked text or the shape's alternative text, else its
+// ScreenTip, else where it goes.
+export function linkLabel (link, slides = []) {
+  const t = link.target || {}
+  const where = t.type === 'url'
+    ? t.url.replace(/^(mailto|tel):/i, '')
+    : t.type === 'slide'
+      ? (() => {
+          const k = slides.findIndex(s => s.index === t.index)
+          const title = slides[k]?.title
+          return k < 0 ? 'Slide' : title ? `Slide ${k + 1}: ${title}` : `Slide ${k + 1}`
+        })()
+      : { nextSlide: 'Next slide', previousSlide: 'Previous slide', firstSlide: 'First slide', lastSlide: 'Last slide', endShow: 'End show' }[t.type] || 'Link'
+  const named = link.label || link.tooltip
+  return named && named !== where ? `${named} (${where})` : where
+}
+
+// Hit tests sent to the worker, matched to their replies by id. Each resolves to a link or null;
+// none is ever left waiting: a restart or too many at once resolve the oldest to null.
+export class LinkRequests {
+  constructor (max = 32) {
+    this.nextId = 1
+    this.max = max
+    this.pending = new Map()
+  }
+
+  ask (worker, x, y) {
+    const id = this.nextId++
+    return new Promise(resolve => {
+      this.pending.set(id, resolve)
+      if (this.pending.size > this.max) this.settle({ id: this.pending.keys().next().value, link: null })
+      worker.postMessage({ type: 'linkAt', id, x, y })
+    })
+  }
+
+  // The worker's reply: {type: 'linkAt', id, link}.
+  settle (m) {
+    const resolve = this.pending.get(m.id)
+    if (!resolve) return
+    this.pending.delete(m.id)
+    resolve(m.link ?? null)
+  }
+
+  cancel () {
+    for (const resolve of this.pending.values()) resolve(null)
+    this.pending.clear()
+  }
+}
+
 // One speaker-notes request to the worker at a time: a newer request replaces a pending one. Each
 // carries an id the worker echoes, so a late reply to a replaced request is dropped.
 export class NotesRequest {
@@ -325,7 +444,7 @@ export class NotesRequest {
 }
 
 export class DeckcraftPlayer {
-  constructor (container, { base = '', workerUrl, glueUrl, wasmUrl, fonts = [], fontsBase = null, controls = false, clock = () => Date.now() } = {}) {
+  constructor (container, { base = '', workerUrl, glueUrl, wasmUrl, fonts = [], fontsBase = null, controls = false, clock = () => Date.now(), linkHoverMs = 100 } = {}) {
     this.container = container
     this.base = base
     this.urls = { worker: workerUrl, glue: glueUrl, wasm: wasmUrl }
@@ -340,6 +459,14 @@ export class DeckcraftPlayer {
     this.position = null
     this.restarts = 0
     this.source = null
+    this.links = []
+    this.linkRequests = new LinkRequests()
+    this.linkHoverMs = linkHoverMs
+    this.hover = { pointer: null, known: null, busy: false, again: false }
+    // Anchors for the deck's links, under the clips: keyboards and screen readers use them, the
+    // mouse goes through them to the canvas.
+    this.linkLayer = document.createElement('div')
+    this.linkLayer.style.cssText = 'position:absolute;inset:0;pointer-events:none'
     this.layer = document.createElement('div')
     this.layer.style.cssText = 'position:absolute;inset:0;pointer-events:none'
     container.style.position = container.style.position || 'relative'
@@ -361,7 +488,11 @@ export class DeckcraftPlayer {
     this.canvas = document.createElement('canvas')
     this.canvas.style.cssText = 'display:block;width:100%;height:auto;background:#000'
     this.container.prepend(this.canvas)
-    this.container.append(this.layer)
+    this.container.append(this.linkLayer, this.layer)
+    this.canvas.addEventListener('pointermove', e => this.pointerMoved(e))
+    this.canvas.addEventListener('pointerdown', e => this.pointerMoved(e, true))
+    this.canvas.addEventListener('pointerleave', () => this.pointerLeft())
+    this.canvas.addEventListener('click', e => this.clicked(e))
     const offscreen = this.canvas.transferControlToOffscreen()
     // Workers can't be created from another origin's script: start from a same-origin blob that
     // imports the real worker.
@@ -461,6 +592,8 @@ export class DeckcraftPlayer {
       case 'fonts': this.emit('fonts', { loaded: m.loaded, missing: m.missing }); break
       case 'notes':
       case 'notesError': this.notes.settle(m); break
+      case 'links': this.showLinks(m.links); break
+      case 'linkAt': this.linkRequests.settle(m); break
       case 'error':
         if (!this.info) this.rejectInit(new Error(m.message))
         if (m.fatal) this.crashed(m.message)
@@ -477,6 +610,7 @@ export class DeckcraftPlayer {
     this.emit('error', { message, fatal: this.restarts > 0 || !this.info })
     if (this.restarts > 0 || !this.info) return
     this.restarts += 1
+    this.linkRequests.cancel()
     this.worker.terminate()
     this.start()
     this.open(this.source).catch(() => {})
@@ -665,6 +799,166 @@ export class DeckcraftPlayer {
     m.el.pause()
   }
 
+  // The link a click at (x, y) follows, in fractions of the slide: resolves to one of `links`, or
+  // null.
+  linkAt (x, y) {
+    return this.linkRequests.ask(this.worker, x, y)
+  }
+
+  // Does a link do anything for this viewer? A URL opens for everyone; slide targets move only a
+  // viewer with controls.
+  linkActs (link) {
+    const t = link?.target
+    return t?.type === 'url' ? !!safeLinkUrl(t.url) : !!t && this.controls
+  }
+
+  // The point under a pointer event, in fractions of the slide (the canvas is the slide).
+  pointOf (e) {
+    const r = this.canvas.getBoundingClientRect()
+    if (!(r.width > 0 && r.height > 0)) return null
+    return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height]
+  }
+
+  // Is any link's box under (x, y)? Only then is the worker asked: a hit is always one of them.
+  nearLink ([x, y]) {
+    return this.links.some(l => insideQuad(l.quad, x, y))
+  }
+
+  // The pointer moved (or went down): over a link's box, ask the worker what is there, at most once
+  // per linkHoverMs; elsewhere the cursor is the page's at once. A touch has no hover, so its
+  // pointerdown asks straight away, for the click that follows.
+  pointerMoved (e, now = false) {
+    const p = this.pointOf(e)
+    const h = this.hover
+    h.pointer = p
+    if (!p || !this.nearLink(p)) {
+      h.again = false
+      h.known = p && { at: p, link: null }
+      this.showHover(null)
+      return
+    }
+    if (h.busy && !now) {
+      h.again = true
+      return
+    }
+    this.hoverAt(p)
+  }
+
+  pointerLeft () {
+    this.hover.pointer = null
+    this.hover.again = false
+    this.showHover(null)
+  }
+
+  hoverAt (p) {
+    const h = this.hover
+    h.busy = true
+    h.again = false
+    let replied = false
+    let waited = false
+    const done = () => {
+      if (!replied || !waited) return
+      h.busy = false
+      if (h.again && h.pointer) this.hoverAt(h.pointer)
+    }
+    clearTimeout(h.timer)
+    h.timer = setTimeout(() => {
+      waited = true
+      done()
+    }, this.linkHoverMs)
+    this.linkAt(p[0], p[1]).then(link => {
+      replied = true
+      h.known = { at: p, link }
+      // The pointer may have moved on since: still over a link's box, the answer stands until the
+      // next one comes.
+      if (h.pointer && this.nearLink(h.pointer)) this.showHover(link)
+      done()
+    })
+  }
+
+  showHover (link) {
+    if (!this.canvas) return
+    this.canvas.style.cursor = this.linkActs(link) ? 'pointer' : ''
+    this.canvas.title = link?.tooltip || ''
+  }
+
+  // A click on the slide. Off every link's box it is the page's. On one, it is the link's: the page
+  // doesn't see it, and the link is followed once the worker says which it is (at once when the
+  // hover already knows). A click on a box another shape covers does nothing.
+  clicked (e) {
+    const p = this.pointOf(e)
+    if (!p) return
+    const known = this.hover.known
+    const same = known && Math.abs(known.at[0] - p[0]) < 1e-3 && Math.abs(known.at[1] - p[1]) < 1e-3
+    if (same ? !known.link : !this.nearLink(p)) return
+    e.preventDefault()
+    e.stopImmediatePropagation()
+    if (same) this.follow(known.link)
+    else this.linkAt(p[0], p[1]).then(link => link && this.follow(link))
+  }
+
+  // Emit `link`, then, unless the page prevents it, open a URL or (with controls) go to a slide.
+  follow (link) {
+    const target = link.target || {}
+    const url = target.type === 'url' ? safeLinkUrl(target.url) : null
+    if (target.type === 'url' && !url) return
+    const position = linkDestination(target, this.info?.slides || [], this.position)
+    const e = {
+      target: url ? { ...target, url } : target,
+      position,
+      moves: !!position && this.controls,
+      shape: link.shape,
+      text: !!link.text,
+      label: link.label || '',
+      tooltip: link.tooltip || '',
+      defaultPrevented: false,
+      preventDefault () { this.defaultPrevented = true },
+    }
+    this.emit('link', e)
+    if (e.defaultPrevented) return
+    if (url) this.openLink(url)
+    else if (e.moves) this.advance(position)
+  }
+
+  openLink (url) {
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }
+
+  // The worker's links for the position shown: kept for hit tests, and an anchor over each one
+  // that does something here.
+  showLinks (links) {
+    this.links = Array.isArray(links) ? links : []
+    this.hover.known = null
+    const doc = this.linkLayer.ownerDocument
+    const seen = new Set()
+    const anchors = this.links.filter(l => this.linkActs(l)).map(link => {
+      const a = doc.createElement('a')
+      const url = link.target.type === 'url' ? safeLinkUrl(link.target.url) : null
+      a.href = url || '#'
+      if (url) {
+        a.target = '_blank'
+        a.rel = 'noopener noreferrer'
+      }
+      a.setAttribute('aria-label', linkLabel(link, this.info?.slides || []))
+      // A run of text over several lines is one link: keyboards and screen readers get its first box.
+      const key = JSON.stringify([link.shape, link.text, link.target, link.label])
+      if (seen.has(key)) {
+        a.tabIndex = -1
+        a.setAttribute('aria-hidden', 'true')
+      }
+      seen.add(key)
+      const [x, y, w, h] = link.rect
+      a.style.cssText = `position:absolute;left:${x * 100}%;top:${y * 100}%;width:${w * 100}%;height:${h * 100}%;pointer-events:none;background:transparent`
+      a.addEventListener('click', e => {
+        e.preventDefault()
+        e.stopPropagation()
+        this.follow(link)
+      })
+      return a
+    })
+    this.linkLayer.replaceChildren(...anchors)
+  }
+
   // The speaker notes of another deck (the original of the attendee copy on screen), by file
   // slide id. Notes stay here: never send them on to other people.
   notesOf (url) {
@@ -673,6 +967,8 @@ export class DeckcraftPlayer {
 
   destroy () {
     this.notes.cancel()
+    this.linkRequests.cancel()
+    clearTimeout(this.hover.timer)
     clearInterval(this.syncTimer)
     this.resizeObserver?.disconnect()
     this.worker?.terminate()

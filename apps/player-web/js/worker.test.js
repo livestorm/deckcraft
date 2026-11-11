@@ -2,7 +2,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue } = require('./worker.js')
+const { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue, answerLinkAt } = require('./worker.js')
 
 const BASE = 'https://fonts.example/'
 
@@ -141,4 +141,52 @@ test('a task that throws in the queue does not stop the ones after it', async ()
   await assert.rejects(enqueue(() => { throw new Error('bad deck') }), /bad deck/)
   await enqueue(() => ran.push('jump'))
   assert.deepEqual(ran, ['jump'])
+})
+
+// A link as WebPlayer.linkAt gives it.
+const LINK = { target: { type: 'url', url: 'https://example.com' }, shape: 4, text: false, rect: [0.1, 0.1, 0.2, 0.1], quad: [[0.1, 0.1], [0.3, 0.1], [0.3, 0.2], [0.1, 0.2]], tooltip: '', label: 'Docs' }
+
+test('a hit test goes from the page to the worker and back, matched by id', async () => {
+  const { LinkRequests } = await import('./player.js')
+  const requests = new LinkRequests()
+  const asked = []
+  // The page's postMessage reaches the worker, whose reply reaches the page.
+  const worker = {
+    postMessage: m => answerLinkAt(m, {
+      linkAt: (x, y) => { asked.push([x, y]); return x < 0.5 ? LINK : null },
+      post: reply => queueMicrotask(() => requests.settle(reply)),
+    }),
+  }
+  const [hit, miss] = await Promise.all([requests.ask(worker, 0.2, 0.15), requests.ask(worker, 0.9, 0.9)])
+  assert.deepEqual(hit, LINK)
+  assert.equal(miss, null)
+  assert.deepEqual(asked, [[0.2, 0.15], [0.9, 0.9]])
+})
+
+test('a hit test is always answered: null for a point that is not one, or when the module traps', () => {
+  const posted = []
+  const failures = []
+  const post = m => posted.push(m)
+  answerLinkAt({ id: 1, x: NaN, y: 0.5 }, { linkAt: () => LINK, post })
+  answerLinkAt({ id: 2, x: '0.5', y: 0.5 }, { linkAt: () => LINK, post })
+  answerLinkAt({ id: 3, x: 0.5, y: 0.5 }, { linkAt: () => { throw new Error('unreachable executed') }, post, failed: e => failures.push(e.message) })
+  answerLinkAt({ id: 4, x: 0.5, y: 0.5 }, { linkAt: () => undefined, post })
+  assert.deepEqual(posted, [1, 2, 3, 4].map(id => ({ type: 'linkAt', id, link: null })))
+  assert.deepEqual(failures, ['unreachable executed'])
+})
+
+test('replies to hit tests nobody waits for are ignored, and a restart answers the rest with null', async () => {
+  const { LinkRequests } = await import('./player.js')
+  const requests = new LinkRequests(2)
+  const sent = []
+  const worker = { postMessage: m => sent.push(m) }
+  const a = requests.ask(worker, 0.1, 0.1)
+  const b = requests.ask(worker, 0.2, 0.2)
+  const c = requests.ask(worker, 0.3, 0.3)
+  assert.equal(await a, null, 'too many at once: the oldest gives way')
+  requests.settle({ type: 'linkAt', id: 999, link: LINK })
+  requests.settle({ type: 'linkAt', id: sent[1].id, link: LINK })
+  assert.deepEqual(await b, LINK)
+  requests.cancel()
+  assert.equal(await c, null)
 })

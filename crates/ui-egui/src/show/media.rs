@@ -273,7 +273,8 @@ mod hit_tests {
     use super::*;
 
     fn shape(id: u32, parent: Option<usize>, rect: deckcraft_geom::Rect) -> PlacedShape {
-        PlacedShape { id: ShapeId(id), parent, is_group: parent.is_none(), rect, link: None }
+        let quad = [rect.origin(), (rect.x1, rect.y0).into(), (rect.x1, rect.y1).into(), (rect.x0, rect.y1).into()];
+        PlacedShape { id: ShapeId(id), parent, is_group: parent.is_none(), rect, quad, link: None }
     }
 
     #[test]

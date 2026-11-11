@@ -1,5 +1,5 @@
 use deckcraft_player::Frame;
-use deckcraft_player::{Player, Pos};
+use deckcraft_player::{LinkRegion, LinkTarget, Player, Pos};
 use js_sys::{Array, Float32Array, Object, Reflect, Uint8Array, Uint8ClampedArray, Uint32Array};
 use wasm_bindgen::prelude::*;
 
@@ -207,6 +207,65 @@ impl WebPlayer {
         }
         Ok(out.into())
     }
+
+    /// The links a viewer can click at the current position, back to front: `[{target, shape,
+    /// text, rect: [x, y, w, h], quad: [[x, y] × 4], tooltip, label}]`, in fractions of the slide.
+    /// `target` is `{type: 'url', url}` (http, https, mailto or tel only), `{type: 'slide', index,
+    /// fileId}`, or `{type}` for `nextSlide`, `previousSlide`, `firstSlide`, `lastSlide` and
+    /// `endShow`.
+    pub fn links(&mut self) -> Result<JsValue, JsValue> {
+        let out = Array::new();
+        for l in self.inner.links() {
+            out.push(&region(&l)?);
+        }
+        Ok(out.into())
+    }
+
+    /// The link a click at (`x`, `y`) follows, in fractions of the slide's width and height, as
+    /// one of `links()`; `null` when there is none.
+    #[wasm_bindgen(js_name = linkAt)]
+    pub fn link_at(&mut self, x: f64, y: f64) -> Result<JsValue, JsValue> {
+        match self.inner.link_at(x, y) {
+            Some(l) => region(&l),
+            None => Ok(JsValue::NULL),
+        }
+    }
+}
+
+fn region(l: &LinkRegion) -> Result<JsValue, JsValue> {
+    let o = Object::new();
+    set(&o, "target", target(&l.target)?)?;
+    set(&o, "shape", l.shape.0)?;
+    set(&o, "text", l.text)?;
+    let rect: Array = l.rect.iter().map(|v| JsValue::from_f64(*v)).collect();
+    set(&o, "rect", rect)?;
+    let quad: Array = l.quad.iter().map(|p| p.iter().map(|v| JsValue::from_f64(*v)).collect::<Array>()).collect();
+    set(&o, "quad", quad)?;
+    set(&o, "tooltip", l.tooltip.as_str())?;
+    set(&o, "label", l.label.as_str())?;
+    Ok(o.into())
+}
+
+fn target(t: &LinkTarget) -> Result<JsValue, JsValue> {
+    let o = Object::new();
+    let kind = match t {
+        LinkTarget::Url(url) => {
+            set(&o, "url", url.as_str())?;
+            "url"
+        }
+        LinkTarget::Slide { index, file_id } => {
+            set(&o, "index", *index as f64)?;
+            set(&o, "fileId", file_id.map_or(JsValue::NULL, |id| JsValue::from_f64(f64::from(id))))?;
+            "slide"
+        }
+        LinkTarget::NextSlide => "nextSlide",
+        LinkTarget::PreviousSlide => "previousSlide",
+        LinkTarget::FirstSlide => "firstSlide",
+        LinkTarget::LastSlide => "lastSlide",
+        LinkTarget::EndShow => "endShow",
+    };
+    set(&o, "type", kind)?;
+    Ok(o.into())
 }
 
 fn picture(f: &Frame) -> Result<JsValue, JsValue> {

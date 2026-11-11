@@ -27,6 +27,7 @@ await player.open(deckUrl)
 player.advance(player.nextOf(player.position)) // a click: the next step or slide, animated
 player.advance(player.prevOf(player.position)) // Back: to the previous slide, its transition reversed
 player.jump(position)                           // anything else, shown at rest
+player.on('link', e => console.log(e.target))   // a click on a link in the deck (see Links)
 ```
 
 ## Fonts
@@ -118,6 +119,56 @@ shares. It is `Date.now` by default, which is only as close as the computers' cl
 server's time, as each client last measured its offset from it, for viewers to keep within a
 fraction of a second. An action without `time` (from players before 0.5.0) is followed as before,
 and not kept in step.
+
+## Links
+
+Links in a deck can be clicked: on a whole shape or picture (Insert > Link on the shape, or an
+action), and on runs of text, one box per line a run is laid out on. As in PowerPoint's slide
+show, only what is shown at the current step can be clicked (a shape not yet animated in, or gone,
+can't), the topmost shape under the pointer decides, a shape without a link blocks the links
+beneath it, and groups, rotation and flips are followed.
+
+```js
+player.on('link', e => {
+  // e.target: {type: 'url', url} | {type: 'slide', index, fileId} |
+  //           {type: 'nextSlide' | 'previousSlide' | 'firstSlide' | 'lastSlide' | 'endShow'}
+  // e.position: where a slide target goes ([slide, step]), null when nowhere in this show
+  // e.moves: the player moves there itself (a slide target, with `controls`)
+  // e.shape, e.text (a link on text), e.label, e.tooltip
+  // e.preventDefault(): the player then does nothing more
+})
+player.links            // the current position's links: [{target, shape, text, rect, quad, tooltip, label}]
+await player.linkAt(x, y) // the link a click at (x, y) follows, or null
+```
+
+- The pointer turns into a hand over a link that does something for this viewer: a URL, or with
+  `controls` a slide target. Hit tests run in the worker only over a link's box, at most every
+  `linkHoverMs` (100 ms by default).
+- A click on a link emits `link` and is stopped there: the page's own click handlers on the player
+  don't see it, so a click that advances the slide doesn't. A click elsewhere is the page's, as
+  before.
+- Unless the page calls `preventDefault()`: a URL opens in a new tab with `noopener,noreferrer`;
+  with `controls`, a slide target moves the deck like `advance(e.position)` (the next slide's
+  transition plays when it is one click ahead). Without `controls`, slide targets are only
+  reported. `endShow` is left to the page.
+- Only `http` and `https` (with a host), `mailto` and `tel` URLs are kept, by the worker and again
+  by the page: `javascript:`, `data:`, `file:`, relative and malformed links are dropped. A slide
+  target is kept only for a slide of this show: a link to a slide the attendee copy left out (a
+  hidden slide) is dropped. Links to the last slide viewed, custom shows, programs and media aren't
+  followed; links in the layout's and master's graphics aren't either, as in DeckCraft's own show.
+- Each link the viewer can use gets a transparent `<a>` over it, labelled by its linked text or the
+  shape's alternative text, else its ScreenTip, with where it goes. Keyboards and screen readers
+  reach them (a link over several lines once, at its first line); the mouse goes through them to
+  the slide.
+- Clips' own controls (`controls`) sit above the links and get their clicks, as before.
+
+`rect` is `[x, y, w, h]` and `quad` the box's corners as turned (`[[x, y] × 4]`), both in fractions
+of the slide. At most 256 links per position; labels and ScreenTips are cut to 200 characters,
+URLs to 2048.
+
+Worker protocol: the worker sends `{type: 'links', slide, step, links}` after `ready` and whenever
+the position changes. Send `{type: 'linkAt', id, x, y}`; the worker answers `{type: 'linkAt', id,
+link}` (`null` when there is none) at once, outside its queue.
 
 ## YouTube videos
 

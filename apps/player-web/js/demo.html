@@ -63,6 +63,7 @@ player.on('metrics', m => {
 player.on('error', e => log('error', e))
 player.on('fonts', f => { window.metrics.fonts = f; log('fonts', f) })
 player.on('mediaAction', a => log('mediaAction', a))
+player.on('link', e => { log('link', { target: e.target, position: e.position, moves: e.moves }); if (e.moves) setTimeout(show) })
 
 $('next').onclick = () => { player.advance(player.nextOf(player.position)); show() }
 $('prev').onclick = () => { player.advance(player.prevOf(player.position)); show() }

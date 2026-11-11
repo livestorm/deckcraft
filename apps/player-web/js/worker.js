@@ -7,6 +7,8 @@
 //      {type: 'jump', slide, step} | {type: 'advance', slide, step}
 //      {type: 'notes', url, id} | {type: 'notes', bytes, id}: another deck's speaker notes. The
 //        download runs alongside everything else; only reading the deck joins the queue
+//      {type: 'linkAt', id, x, y}: the link a click at (x, y) follows, in fractions of the slide's
+//        width and height. Answered at once, outside the queue
 // Out: {type: 'initialized', loadMs}
 //      {type: 'fonts', loaded: [{family, from}], missing: [family]} when fontsBase is set
 //      {type: 'ready', info, media, openMs}
@@ -14,6 +16,13 @@
 //      {type: 'cues', cues: [{shape, action}]}
 //      {type: 'metrics', frameMs, width, height}
 //      {type: 'notes', id, notes: [{fileId, notes}]} | {type: 'notesError', id, message}
+//      {type: 'links', slide, step, links: [link]}: the links a viewer can click, back to front,
+//        sent after 'ready' and whenever the position changes
+//      {type: 'linkAt', id, link: link | null}: the reply to a linkAt, by its id
+//        link: {target, shape, text, rect: [x, y, w, h], quad: [[x, y] × 4], tooltip, label}, in
+//        fractions of the slide; target: {type: 'url', url} (http, https, mailto or tel),
+//        {type: 'slide', index, fileId}, or {type: 'nextSlide' | 'previousSlide' | 'firstSlide' |
+//        'lastSlide' | 'endShow'}
 //      {type: 'error', message, fatal}
 
 /* global wasm_bindgen */ // declared by deckcraft_player.js, imported below
@@ -25,6 +34,8 @@ let ctx = null // 2D fallback when WebGL2 isn't available
 let gl = null
 let scheduled = false
 let lastState = ''
+let lastLinks = ''
+let ready = false // the deck on screen has its fonts: its links are where they are drawn
 
 // WebGL2: every picture is a texture drawn as triangles; transitions are the layers' meshes over
 // the slides' textures, so a frame costs a few dozen vertices instead of a CPU composite.
@@ -228,7 +239,32 @@ function tick () {
     lastState = state
     post({ type: 'state', slide, step, animating: f.animating })
   }
+  if (ready && `${slide}/${step}` !== lastLinks) {
+    lastLinks = `${slide}/${step}`
+    try {
+      post({ type: 'links', slide, step, links: player.links() })
+    } catch (err) {
+      player = null
+      fail(err, true)
+      return
+    }
+  }
   if (f.animating) schedule()
+}
+
+// The reply to a linkAt: the link under (x, y), or null when there is none, the deck isn't ready
+// or the point isn't one. Always answered, so the page never waits; a trap in the module goes to
+// `failed` as well.
+function answerLinkAt ({ id, x, y }, { linkAt, post, failed = () => {} }) {
+  let link = null
+  if (Number.isFinite(x) && Number.isFinite(y)) {
+    try {
+      link = linkAt(x, y) ?? null
+    } catch (err) {
+      failed(err)
+    }
+  }
+  post({ type: 'linkAt', id, link })
 }
 
 async function init ({ glueUrl, wasmUrl, canvas: c, fonts, fontsBase: fb }) {
@@ -250,6 +286,7 @@ async function open ({ url, bytes, download }) {
     return r.arrayBuffer()
   })
   player = new wasm_bindgen.WebPlayer(new Uint8Array(buf))
+  ready = false
   if (fontsBase) {
     // Before the first frame, so text never switches font in front of the audience.
     const requests = player.fontRequests()
@@ -265,6 +302,8 @@ async function open ({ url, bytes, download }) {
   const media = player.media()
   post({ type: 'ready', info: player.info(), media, openMs: performance.now() - t0 }, media.map(m => m.data.buffer))
   lastState = ''
+  lastLinks = ''
+  ready = true
   schedule()
 }
 
@@ -308,7 +347,7 @@ function enqueue (task) {
 
 if (typeof module === 'object' && module.exports) {
   // Node, for the tests (worker.test.js).
-  module.exports = { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue }
+  module.exports = { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue, answerLinkAt }
 } else {
   // An `open`'s download starts at once, alongside the module's; so does a notes download.
   self.onmessage = ({ data }) => {
@@ -318,6 +357,15 @@ if (typeof module === 'object' && module.exports) {
     }
     if (data.type === 'notes') {
       startNotes(data, { fetchFn: fetch, enqueue, notesOf: bytes => wasm_bindgen.WebPlayer.notesOf(bytes), post })
+      return
+    }
+    if (data.type === 'linkAt') {
+      // A hover or a click waits for nothing: the answer is the deck on screen's, now.
+      const failed = err => {
+        player = null
+        fail(err, true)
+      }
+      answerLinkAt(data, { linkAt: (x, y) => (ready && player ? player.linkAt(x, y) : null), post, failed })
       return
     }
     enqueue(() => handle(data))

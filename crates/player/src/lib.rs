@@ -9,6 +9,8 @@
 //!   automatic first step), and back to the previous slide (the left slide's transition, reversed).
 //! - [`Player::frame`] returns the picture at a moment of the show as straight RGBA, and the media
 //!   effects (Play, Pause, Stop) the show reached, for the host page to carry out.
+//! - [`Player::links`] and [`Player::link_at`]: the hyperlinks a viewer can click at the current
+//!   position, and the one under a point, with typed targets ([`LinkTarget`]).
 //!
 //! Embedded audio and video are not played here: [`Player::media`] hands their bytes and boxes to
 //! the host, whose own players have sound.
@@ -24,8 +26,13 @@ use deckcraft_render::{
     Image, ParaState, PathMorph, RenderOpts, ShapeState, SlideParts, TextMorph, composite_transition, render_blend, render_slide,
 };
 
+mod links;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_links;
+
+pub use links::{LinkRegion, LinkTarget, MAX_LABEL_CHARS, MAX_LINKS, MAX_URL_LEN};
 
 /// Largest frame width rendered, whatever the host asks for.
 pub const MAX_WIDTH: u32 = 1920;
@@ -179,6 +186,8 @@ pub struct Player {
     /// The slide was entered at rest (opened, or jumped onto from another slide): the next frame
     /// starts the media its automatic first step starts, which entering past that step skipped.
     entry_media: bool,
+    /// The shown slide's shapes and links as laid out, for [`Player::links`].
+    placement: Option<links::Placement>,
 }
 
 impl Player {
@@ -205,6 +214,7 @@ impl Player {
             warnings,
             gpu_transitions: false,
             entry_media: true,
+            placement: None,
         };
         player.resize(1280);
         player.pos = player.entry(first);

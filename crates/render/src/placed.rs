@@ -5,7 +5,7 @@ use deckcraft_model::resolve::{self, Ctx};
 use deckcraft_model::text::{Hyperlink, RunKind, TextBody};
 use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind};
 use deckcraft_text::{Fields, Opts, TextLayout};
-use kurbo::{Affine, Rect};
+use kurbo::{Affine, Point, Rect};
 
 use crate::{SlideFields, shape_geometry, table};
 
@@ -21,11 +21,15 @@ pub struct PlacedText {
 pub struct PlacedLink {
     /// Slide-space bounding box.
     pub rect: Rect,
+    /// The box's corners in slide space, as rotation and flips leave them (`rect` bounds them).
+    pub quad: [Point; 4],
     pub link: Hyperlink,
     /// The shape that owns the link (for a text hyperlink, the shape holding the text).
     pub shape: ShapeId,
     /// A hyperlink on text, not the shape's own action.
     pub text: bool,
+    /// For a hyperlink on text, the paragraph of the shape's text it is in.
+    pub para: Option<usize>,
 }
 
 /// A shape of the slide itself (not of its layout or master) with its slide-space bounding box:
@@ -37,6 +41,8 @@ pub struct PlacedShape {
     pub is_group: bool,
     /// Slide-space bounding box.
     pub rect: Rect,
+    /// The box's corners in slide space, as rotation and flips leave them (`rect` bounds them).
+    pub quad: [Point; 4],
     /// The shape's own action (Insert ▸ Action), not its text hyperlinks.
     pub link: Option<Hyperlink>,
 }
@@ -118,11 +124,13 @@ fn place(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, s: &Shape, parent: 
     }
     let m = parent * x.affine();
     let rect = m.transform_rect_bbox(Rect::new(0.0, 0.0, x.w, x.h));
+    let quad = corners(m, Rect::new(0.0, 0.0, x.w, x.h));
     if let Some(link) = &s.click {
-        out.links.push(PlacedLink { rect, link: link.clone(), shape: s.id, text: false });
+        out.links.push(PlacedLink { rect, quad, link: link.clone(), shape: s.id, text: false, para: None });
     }
     let me = if own {
-        out.shapes.push(PlacedShape { id: s.id, parent: group, is_group: matches!(s.kind, ShapeKind::Group { .. }), rect, link: s.click.clone() });
+        let is_group = matches!(s.kind, ShapeKind::Group { .. });
+        out.shapes.push(PlacedShape { id: s.id, parent: group, is_group, rect, quad, link: s.click.clone() });
         Some(out.shapes.len() - 1)
     } else {
         None
@@ -183,9 +191,15 @@ fn place_text(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, owner: ShapeId
         let first = run.glyphs.first().map(|g| g.1).unwrap_or(0.0);
         let (x0, x1) = line.span(run.chars.0, run.chars.1).unwrap_or((first, first));
         let r = Rect::new(x0, line.top, x1, line.bottom);
-        out.links.push(PlacedLink { rect: m.transform_rect_bbox(r), link, shape: owner, text: true });
+        out.links.push(PlacedLink { rect: m.transform_rect_bbox(r), quad: corners(m, r), link, shape: owner, text: true, para: Some(run.para) });
     }
     out.texts.push(PlacedText { layout, transform: m, body: placed });
+}
+
+/// The corners of `r` mapped by `m`: top left, top right, bottom right, bottom left before the
+/// mapping.
+fn corners(m: Affine, r: Rect) -> [Point; 4] {
+    [m * Point::new(r.x0, r.y0), m * Point::new(r.x1, r.y0), m * Point::new(r.x1, r.y1), m * Point::new(r.x0, r.y1)]
 }
 
 /// The hyperlink of the model run containing character `at` of paragraph `para`.

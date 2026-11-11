@@ -491,7 +491,7 @@ mod speaker_notes {
     }
 }
 
-mod online_video {
+pub(crate) mod online_video {
     use std::io::{Cursor, Read, Write};
 
     use super::*;
@@ -501,7 +501,7 @@ mod online_video {
     /// A one-slide deck with a YouTube video as PowerPoint 16 saves one (Insert > Online Video): a
     /// picture whose `a:videoFile` links to an external video relationship, no `p14:media`, and a
     /// click that plays it (`playFrom`) at 80% volume.
-    fn deck() -> Vec<u8> {
+    pub(crate) fn deck() -> Vec<u8> {
         let p = deckcraft_model::defaults::new_presentation(None);
         let bytes = deckcraft_pptx::export(&p).expect("export");
         let pic = r#"<p:pic><p:nvPicPr><p:cNvPr id="90" name="Online Media 1" title="A video"><a:hlinkClick r:id="" action="ppaction://media"/></p:cNvPr><p:cNvPicPr><a:picLocks noRot="1" noChangeAspect="1"/></p:cNvPicPr><p:nvPr><a:videoFile r:link="rIdYt"/></p:nvPr></p:nvPicPr><p:blipFill><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="1524000" y="762000"/><a:ext cx="6096000" cy="3429000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>"#;

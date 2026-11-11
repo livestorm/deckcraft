@@ -2,7 +2,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { DeckcraftPlayer, NotesRequest, YouTubeClip, loadYouTubeApi, trimStep, youtubeVideo } from './player.js'
+import { DeckcraftPlayer, LinkRequests, NotesRequest, YouTubeClip, insideQuad, linkDestination, linkLabel, loadYouTubeApi, safeLinkUrl, trimStep, youtubeVideo } from './player.js'
 
 const DURATION = 100
 
@@ -650,4 +650,290 @@ test('a cue anchors the clip where it starts, on this viewer\'s clock', () => {
   el.currentTime = 3
   p.sync()
   assert.equal(el.currentTime, 5)
+})
+
+// Links.
+
+test('only web, mail and phone links may be opened', () => {
+  for (const ok of ['https://example.com/a?b=c#d', 'http://example.com', ' https://example.com ', 'mailto:team@example.com', 'tel:+33123456789']) {
+    assert.equal(safeLinkUrl(ok), ok.trim(), ok)
+  }
+  for (const bad of ['javascript:alert(1)', 'JAVASCRIPT:alert(1)', ' javascript:alert(1)', 'data:text/html,<b>x</b>', 'file:///etc/passwd', 'slide3.xml',
+    '../x', '//example.com', 'https://', 'https:///x', 'https:example.com', 'https://exa mple.com', 'https://example.com/\u0000', 'mailto:', 'tel:',
+    'tel:<b>', 'vbscript:x', 'blob:https://example.com/1', 'ms-word:ofe|u|https://x', '', null, undefined, 42, `https://example.com/${'a'.repeat(2048)}`]) {
+    assert.equal(safeLinkUrl(bad), null, String(bad))
+  }
+})
+
+test('a point is inside a turned box only inside its outline', () => {
+  const diamond = [[0.5, 0.1], [0.7, 0.3], [0.5, 0.5], [0.3, 0.3]]
+  assert.equal(insideQuad(diamond, 0.5, 0.3), true)
+  assert.equal(insideQuad(diamond, 0.5, 0.1), true, 'a corner')
+  assert.equal(insideQuad(diamond, 0.32, 0.12), false, 'inside its bounding box only')
+  assert.equal(insideQuad([[0, 0], [1, 0], [1, 0], [0, 0]], 0.5, 0), false, 'no area')
+  assert.equal(insideQuad(null, 0, 0), false)
+})
+
+const SLIDES = [
+  { index: 0, steps: 0, autoFirst: false, title: 'Intro', fileId: 256 },
+  { index: 1, steps: 2, autoFirst: true, title: 'Plan', fileId: 257 },
+  { index: 3, steps: 1, autoFirst: false, title: '', fileId: 259 },
+]
+
+test('slide targets go where a click would enter the slide; Previous to the slide before, built', () => {
+  assert.deepEqual(linkDestination({ type: 'slide', index: 1, fileId: 257 }, SLIDES, [0, 0]), [1, 1])
+  assert.deepEqual(linkDestination({ type: 'slide', index: 2, fileId: 258 }, SLIDES, [0, 0]), null, 'not in the show')
+  assert.deepEqual(linkDestination({ type: 'nextSlide' }, SLIDES, [1, 1]), [3, 0])
+  assert.deepEqual(linkDestination({ type: 'nextSlide' }, SLIDES, [3, 0]), null, 'the last slide')
+  assert.deepEqual(linkDestination({ type: 'previousSlide' }, SLIDES, [3, 0]), [1, 2])
+  assert.deepEqual(linkDestination({ type: 'previousSlide' }, SLIDES, [0, 0]), null)
+  assert.deepEqual(linkDestination({ type: 'firstSlide' }, SLIDES, [3, 0]), [0, 0])
+  assert.deepEqual(linkDestination({ type: 'lastSlide' }, SLIDES, [0, 0]), [3, 0])
+  assert.deepEqual(linkDestination({ type: 'endShow' }, SLIDES, [0, 0]), null)
+  assert.deepEqual(linkDestination({ type: 'url', url: 'https://example.com' }, SLIDES, [0, 0]), null)
+})
+
+test('a link is labelled by its text, else its ScreenTip, with where it goes', () => {
+  const url = { type: 'url', url: 'https://example.com' }
+  assert.equal(linkLabel({ target: url, label: 'Our site' }), 'Our site (https://example.com)')
+  assert.equal(linkLabel({ target: url, label: '', tooltip: 'Opens the site' }), 'Opens the site (https://example.com)')
+  assert.equal(linkLabel({ target: { type: 'url', url: 'mailto:a@b.c' }, label: '' }), 'a@b.c')
+  assert.equal(linkLabel({ target: { type: 'slide', index: 1 }, label: '' }, SLIDES), 'Slide 2: Plan')
+  assert.equal(linkLabel({ target: { type: 'slide', index: 3 }, label: 'Details' }, SLIDES), 'Details (Slide 3)')
+  assert.equal(linkLabel({ target: { type: 'nextSlide' }, label: '' }), 'Next slide')
+})
+
+// An element and a document as the player's link layer uses them.
+class FakeElement {
+  constructor (tag) {
+    this.tag = tag
+    this.style = {}
+    this.attrs = {}
+    this.children = []
+    this.listeners = {}
+  }
+
+  setAttribute (k, v) { this.attrs[k] = v }
+  addEventListener (type, fn) { (this.listeners[type] ||= []).push(fn) }
+  replaceChildren (...children) { this.children = children }
+  click () {
+    const e = clickEvent(0, 0)
+    for (const fn of this.listeners.click || []) fn(e)
+    return e
+  }
+}
+
+function clickEvent (clientX, clientY) {
+  return {
+    clientX,
+    clientY,
+    defaultPrevented: false,
+    stopped: false,
+    preventDefault () { this.defaultPrevented = true },
+    stopPropagation () { this.stopped = true },
+    stopImmediatePropagation () { this.stopped = true },
+  }
+}
+
+const box = (x, y, w, h) => ({ rect: [x, y, w, h], quad: [[x, y], [x + w, y], [x + w, y + h], [x, y + h]] })
+const WEB = { ...box(0.1, 0.1, 0.2, 0.1), target: { type: 'url', url: 'https://example.com/docs' }, shape: 4, text: true, label: 'the docs', tooltip: 'Read them' }
+const NEXT = { ...box(0.6, 0.6, 0.2, 0.2), target: { type: 'nextSlide' }, shape: 5, text: false, label: '', tooltip: '' }
+const JUMP = { ...box(0.6, 0.1, 0.2, 0.2), target: { type: 'slide', index: 3, fileId: 259 }, shape: 6, text: false, label: '', tooltip: '' }
+
+// A player on slide 0 of SLIDES with `links`, on a 1000 × 500 px canvas. Hit tests go to a worker
+// the test answers with `reply`; opened URLs and moves are recorded.
+function linkPlayer ({ controls = false, links = [WEB, NEXT, JUMP] } = {}) {
+  const p = bareCanvasPlayer()
+  p.controls = controls
+  p.info = { slides: SLIDES }
+  p.position = [0, 0]
+  p.canvas = { style: {}, title: '', getBoundingClientRect: () => ({ left: 0, top: 0, width: 1000, height: 500 }) }
+  p.linkLayer = new FakeElement('div')
+  p.linkLayer.ownerDocument = { createElement: tag => new FakeElement(tag) }
+  p.linkRequests = new LinkRequests()
+  p.linkHoverMs = 100
+  p.hover = { pointer: null, known: null, busy: false, again: false }
+  p.worker = fakeWorker()
+  p.openedUrls = []
+  p.openLink = url => p.openedUrls.push(url)
+  p.moves = []
+  p.advance = pos => p.moves.push(pos)
+  p.events = []
+  p.on('link', e => p.events.push(e))
+  p.showLinks(links)
+  return p
+}
+
+// The worker's answer to the last hit test sent.
+function reply (p, link) {
+  const asked = p.worker.sent.filter(m => m.type === 'linkAt').at(-1)
+  p.linkRequests.settle({ type: 'linkAt', id: asked.id, link })
+  return asked
+}
+
+test('a click on a link emits link, opens it in a new tab, and is not the page\'s click', async () => {
+  const p = linkPlayer()
+  const e = clickEvent(150, 75)
+  p.clicked(e)
+  assert.equal(e.defaultPrevented, true)
+  assert.equal(e.stopped, true)
+  const asked = reply(p, WEB)
+  assert.deepEqual([asked.x, asked.y], [0.15, 0.15])
+  await settle()
+  assert.equal(p.events.length, 1)
+  const [ev] = p.events
+  assert.deepEqual(ev.target, { type: 'url', url: 'https://example.com/docs' })
+  assert.equal(ev.position, null)
+  assert.equal(ev.moves, false)
+  assert.equal(ev.label, 'the docs')
+  assert.deepEqual(p.openedUrls, ['https://example.com/docs'])
+  assert.deepEqual(p.moves, [], 'the slide does not advance')
+})
+
+test('a page that handles the link event opens nothing itself', async () => {
+  const p = linkPlayer()
+  p.on('link', e => e.preventDefault())
+  p.clicked(clickEvent(150, 75))
+  reply(p, WEB)
+  await settle()
+  assert.equal(p.events.length, 1)
+  assert.deepEqual(p.openedUrls, [])
+})
+
+test('a click off every link is the page\'s: no hit test, nothing stopped', () => {
+  const p = linkPlayer()
+  const e = clickEvent(500, 25)
+  p.clicked(e)
+  assert.equal(e.defaultPrevented, false)
+  assert.equal(e.stopped, false)
+  assert.equal(p.worker.sent.length, 0)
+})
+
+test('a click where the hover found no link (another shape covers it) is the page\'s', async () => {
+  const p = linkPlayer()
+  p.pointerMoved({ clientX: 150, clientY: 75 })
+  reply(p, null)
+  await settle()
+  const e = clickEvent(150, 75)
+  p.clicked(e)
+  assert.equal(e.stopped, false)
+  assert.equal(p.events.length, 0)
+})
+
+test('after a hover, a click on the same spot follows the link at once', async () => {
+  const p = linkPlayer()
+  p.pointerMoved({ clientX: 150, clientY: 75 })
+  reply(p, WEB)
+  await settle()
+  p.clicked(clickEvent(150, 75))
+  assert.deepEqual(p.openedUrls, ['https://example.com/docs'], 'no wait for the worker')
+  assert.equal(p.worker.sent.length, 1)
+})
+
+test('slide jumps move a presenter\'s deck; others get the event and stay', async () => {
+  for (const controls of [false, true]) {
+    const p = linkPlayer({ controls })
+    p.clicked(clickEvent(700, 350))
+    reply(p, NEXT)
+    p.clicked(clickEvent(700, 100))
+    reply(p, JUMP)
+    await settle()
+    assert.deepEqual(p.events.map(e => [e.target.type, e.position, e.moves]), [['nextSlide', [1, 1], controls], ['slide', [3, 0], controls]])
+    assert.deepEqual(p.moves, controls ? [[1, 1], [3, 0]] : [])
+    assert.deepEqual(p.openedUrls, [])
+  }
+})
+
+test('a presenter whose page handles the event is not moved', async () => {
+  const p = linkPlayer({ controls: true })
+  p.on('link', e => e.preventDefault())
+  p.clicked(clickEvent(700, 350))
+  reply(p, NEXT)
+  await settle()
+  assert.deepEqual(p.moves, [])
+})
+
+test('a URL the page may not open is neither opened nor reported, whatever the worker says', async () => {
+  const p = linkPlayer()
+  for (const url of ['javascript:alert(1)', 'data:text/html,x', 'file:///etc/passwd']) {
+    p.clicked(clickEvent(150, 75))
+    reply(p, { ...WEB, target: { type: 'url', url } })
+  }
+  await settle()
+  assert.deepEqual(p.events, [])
+  assert.deepEqual(p.openedUrls, [])
+})
+
+test('the pointer is a hand over a link that does something here, and hit tests are throttled', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const p = linkPlayer()
+  for (let i = 0; i < 10; i++) p.pointerMoved({ clientX: 120 + i, clientY: 75 })
+  assert.equal(p.worker.sent.length, 1, 'one hit test while one is out')
+  reply(p, WEB)
+  await settle()
+  assert.equal(p.canvas.style.cursor, 'pointer')
+  assert.equal(p.canvas.title, 'Read them')
+  assert.equal(p.worker.sent.length, 1, 'the next waits for the interval')
+  t.mock.timers.tick(100)
+  assert.equal(p.worker.sent.length, 2, 'then the latest position is asked')
+  assert.equal(p.worker.sent[1].x, 0.129)
+  reply(p, WEB)
+  await settle()
+  t.mock.timers.tick(100)
+  assert.equal(p.worker.sent.length, 2, 'nothing more without a move')
+  // Off every link's box: the cursor goes back at once, without asking.
+  p.pointerMoved({ clientX: 500, clientY: 25 })
+  assert.equal(p.canvas.style.cursor, '')
+  assert.equal(p.worker.sent.length, 2)
+  // A slide target does nothing for an attendee: no hand.
+  p.pointerMoved({ clientX: 700, clientY: 350 })
+  reply(p, NEXT)
+  await settle()
+  assert.equal(p.canvas.style.cursor, '')
+})
+
+test('each link that does something here gets a labelled anchor that keyboards reach', () => {
+  const attendee = linkPlayer()
+  const [a] = attendee.linkLayer.children
+  assert.equal(attendee.linkLayer.children.length, 1, 'slide targets only for presenters')
+  assert.equal(a.tag, 'a')
+  assert.equal(a.href, 'https://example.com/docs')
+  assert.equal(a.target, '_blank')
+  assert.equal(a.rel, 'noopener noreferrer')
+  assert.equal(a.attrs['aria-label'], 'the docs (https://example.com/docs)')
+  assert.match(a.style.cssText, /left:10%;top:10%;width:20%;height:10%/)
+  assert.match(a.style.cssText, /pointer-events:none/, 'the mouse goes to the canvas')
+  const e = a.click() // Enter on a focused anchor
+  assert.equal(e.defaultPrevented, true)
+  assert.deepEqual(attendee.openedUrls, ['https://example.com/docs'])
+  const presenter = linkPlayer({ controls: true })
+  assert.deepEqual(presenter.linkLayer.children.map(c => [c.href, c.attrs['aria-label']]), [
+    ['https://example.com/docs', 'the docs (https://example.com/docs)'],
+    ['#', 'Next slide'],
+    ['#', 'Slide 3'],
+  ])
+  presenter.linkLayer.children[1].click()
+  assert.deepEqual(presenter.moves, [[1, 1]])
+})
+
+test('a new position\'s links replace the old ones, and what the hover knew', () => {
+  const p = linkPlayer()
+  p.hover.known = { at: [0.15, 0.15], link: WEB }
+  p.showLinks([])
+  assert.deepEqual(p.links, [])
+  assert.equal(p.linkLayer.children.length, 0)
+  assert.equal(p.hover.known, null)
+  const e = clickEvent(150, 75)
+  p.clicked(e)
+  assert.equal(e.stopped, false, 'no link here any more')
+})
+
+test('a link over several lines is one stop for keyboards and screen readers', () => {
+  const line = (y) => ({ ...WEB, ...box(0.1, y, 0.2, 0.05) })
+  const p = linkPlayer({ links: [line(0.1), line(0.15), line(0.2)] })
+  const [first, ...rest] = p.linkLayer.children
+  assert.equal(p.linkLayer.children.length, 3, 'each line still has its box')
+  assert.equal(first.tabIndex, undefined)
+  assert.equal(first.attrs['aria-hidden'], undefined)
+  assert.deepEqual(rest.map(a => [a.tabIndex, a.attrs['aria-hidden']]), [[-1, 'true'], [-1, 'true']])
 })

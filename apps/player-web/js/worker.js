@@ -213,6 +213,49 @@ const MAX_IMAGE_FETCHES = 4
 const IMAGE_TIMEOUT_MS = 20000
 // Longest URL fetched for a picture.
 const MAX_MEDIA_URL = 2048
+// Most bytes read for one picture, and for all of one deck's: the player's own limits
+// (MAX_LINKED_IMAGE_BYTES, MAX_LINKED_TOTAL_BYTES), applied while downloading so an oversized
+// response is dropped before it is held in memory.
+const MAX_IMAGE_BYTES = 32 * 1024 * 1024
+const MAX_DECK_IMAGE_BYTES = 256 * 1024 * 1024
+
+// A response's body as bytes, read as it arrives and abandoned once it passes `max` bytes or the
+// deck's remaining `budget` ({left}), whichever is smaller. The budget is spent as bytes arrive.
+async function readCapped (r, max, budget) {
+  const limit = () => Math.min(max, budget.left)
+  const declared = Number(r.headers?.get?.('content-length'))
+  if (Number.isFinite(declared) && declared > limit()) throw new Error(declared > max ? 'too-large' : 'deck-budget')
+  const tooBig = n => new Error(n > max ? 'too-large' : 'deck-budget')
+  if (!r.body?.getReader) {
+    const buf = new Uint8Array(await r.arrayBuffer())
+    if (buf.byteLength > limit()) throw tooBig(buf.byteLength)
+    budget.left -= buf.byteLength
+    return buf
+  }
+  const reader = r.body.getReader()
+  const chunks = []
+  let n = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      n += value.byteLength
+      if (n > limit()) throw tooBig(n)
+      chunks.push(value)
+    }
+  } catch (err) {
+    reader.cancel().catch(() => {})
+    throw err
+  }
+  budget.left -= n
+  const out = new Uint8Array(n)
+  let at = 0
+  for (const c of chunks) {
+    out.set(c, at)
+    at += c.byteLength
+  }
+  return out
+}
 
 // `url` as it may be fetched for a deck: an https URL under `base`, the host's media prefix. The
 // player applies this rule too (deckcraft_player::media_url) and lists only what passes it; it is
@@ -251,7 +294,7 @@ async function pool (tasks, limit) {
 // at most MAX_IMAGE_FETCHES at a time, each abandoned after IMAGE_TIMEOUT_MS. Neither a failed
 // fetch nor bytes the player refuses stops the others: each is reported through `failed` and the
 // deck plays on. Resolves to the counts for the `images` message.
-async function loadImages (images, { fetchFn = fetch, setImage, failed = () => {}, credentials = null, timeoutMs = IMAGE_TIMEOUT_MS, limit = MAX_IMAGE_FETCHES } = {}) {
+async function loadImages (images, { fetchFn = fetch, setImage, failed = () => {}, credentials = null, timeoutMs = IMAGE_TIMEOUT_MS, limit = MAX_IMAGE_FETCHES, maxBytes = MAX_IMAGE_BYTES, budget = { left: MAX_DECK_IMAGE_BYTES } } = {}) {
   const t0 = performance.now()
   let loaded = 0
   let bytes = 0
@@ -265,7 +308,7 @@ async function loadImages (images, { fetchFn = fetch, setImage, failed = () => {
       // with credentials take them to another origin. A media server serves pictures in place.
       const r = await fetchFn(img.url, { signal: stop.signal, redirect: 'error', ...(credentials ? { credentials } : {}) })
       if (!r.ok) throw new Error(`status ${r.status}`)
-      const buf = new Uint8Array(await r.arrayBuffer())
+      const buf = await readCapped(r, maxBytes, budget)
       setImage(img.media, buf)
       loaded++
       bytes += buf.byteLength
@@ -421,6 +464,8 @@ async function openImages ({ deck, base, credentials, post, current, schedule, l
     },
     failed: f => post({ type: 'error', message: 'image-unavailable', url: f.url, slide: f.slide, reason: f.reason, fatal: false }),
     credentials,
+    // One budget for the deck's two rounds.
+    budget: { left: MAX_DECK_IMAGE_BYTES },
   }
   const first = all.filter(m => m.slides.includes(slide))
   post({ type: 'images', ...(await load(first, opts)) })
@@ -470,7 +515,7 @@ function enqueue (task) {
 
 if (typeof module === 'object' && module.exports) {
   // Node, for the tests (worker.test.js).
-  module.exports = { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue, answerLinkAt, loadImages, openImages, mediaUrl, pool, MAX_IMAGE_FETCHES, IMAGE_TIMEOUT_MS }
+  module.exports = { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue, answerLinkAt, loadImages, openImages, mediaUrl, readCapped, MAX_IMAGE_BYTES, pool, MAX_IMAGE_FETCHES, IMAGE_TIMEOUT_MS }
 } else {
   // An `open`'s download starts at once, alongside the module's; so does a notes download.
   self.onmessage = ({ data }) => {

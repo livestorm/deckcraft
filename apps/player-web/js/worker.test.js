@@ -2,7 +2,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue, answerLinkAt, loadImages, openImages, mediaUrl, MAX_IMAGE_FETCHES } = require('./worker.js')
+const { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue, answerLinkAt, loadImages, openImages, mediaUrl, MAX_IMAGE_FETCHES, readCapped } = require('./worker.js')
 
 const BASE = 'https://fonts.example/'
 
@@ -365,6 +365,54 @@ test('a redirect is never followed, so a fetch cannot leave the media prefix', a
   const server = images()
   await loadImages(all, { fetchFn: server.fetch, setImage: () => {} })
   assert.deepEqual(server.asked.map(a => a.redirect), ['error'])
+})
+
+// A response whose body arrives in `chunks` chunks of `size` bytes, with an optional
+// Content-Length; `read` counts the chunks read and `cancelled` says whether reading stopped.
+function streamed (chunks, size, length = null) {
+  const state = { read: 0, cancelled: false }
+  let i = 0
+  return {
+    state,
+    ok: true,
+    headers: { get: k => (k === 'content-length' && length !== null ? String(length) : null) },
+    body: {
+      getReader: () => ({
+        read: async () => (i++ < chunks ? (state.read++, { done: false, value: new Uint8Array(size) }) : { done: true }),
+        cancel: async () => { state.cancelled = true },
+      }),
+    },
+    arrayBuffer: () => assert.fail('the body is streamed, never buffered whole'),
+  }
+}
+
+test('a body is read under the per-picture cap and dropped as soon as it passes it', async () => {
+  const ok = await readCapped(streamed(3, 10), 30, { left: 100 })
+  assert.equal(ok.byteLength, 30)
+  const big = streamed(1000, 10)
+  await assert.rejects(readCapped(big, 25, { left: 100 }), /too-large/)
+  assert.equal(big.state.read, 3, 'stopped at the chunk that passed the cap, not at the end')
+  assert.ok(big.state.cancelled)
+  await assert.rejects(readCapped(streamed(1, 10, 9999), 25, { left: 100 }), /too-large/, 'a declared length over the cap is refused unread')
+})
+
+test('the deck’s total budget is spent as bytes arrive and refuses the picture that would pass it', async () => {
+  const budget = { left: 25 }
+  await readCapped(streamed(2, 10), 100, budget)
+  assert.equal(budget.left, 5)
+  await assert.rejects(readCapped(streamed(1, 10), 100, budget), /deck-budget/)
+  assert.equal(budget.left, 5, 'a refused picture spends nothing')
+})
+
+test('an oversized picture is reported, and the others still load', async () => {
+  const all = [image(1, 'big.png', [0]), image(2, 'a.png', [0])]
+  const failed = []
+  const set = []
+  const fetchFn = async url => (url.endsWith('big.png') ? streamed(100, 1024) : streamed(1, 16))
+  const got = await loadImages(all, { fetchFn, setImage: m => set.push(m), failed: f => failed.push(f), maxBytes: 4096 })
+  assert.deepEqual(failed.map(f => f.reason), ['too-large'])
+  assert.deepEqual(set, [2])
+  assert.equal(got.bytes, 16)
 })
 
 test('bytes that arrive after the deck was replaced are dropped', async () => {

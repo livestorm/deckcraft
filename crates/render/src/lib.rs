@@ -51,7 +51,7 @@ use vello_cpu::{RenderContext, Resources, peniko};
 pub use deckcraft_anim::{transition_frame, transition_layers, uses_slide_parts};
 pub use deckcraft_svg::{is_svg, is_svgz, pixel_size as svg_pixel_size};
 pub use extent::{Region, TILE, layout_extent, pasteboard_region, slide_extent};
-pub use images::{decode as decode_image, gif_frame};
+pub use images::{decodable as image_decodable, decode as decode_image, gif_frame};
 pub use morph_path::PathMorph;
 pub use morph_text::TextMorph;
 pub use pattern::{is_fg as pattern_is_fg, presets as pattern_presets, tile as pattern_tile};

@@ -143,6 +143,24 @@ fn decode_at(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
     decode_raster(bytes, MAX_RGBA)
 }
 
+/// Whether `bytes` look like a picture [`decode_for`] would draw, read from the header only: an
+/// SVG or a metafile, or a raster format the decoder knows whose straight RGBA fits the same
+/// limits as every other picture. Cheap enough for bytes arriving from the network; a picture
+/// that passes can still fail its full decode, and is then drawn as any unreadable picture is.
+pub fn decodable(bytes: &[u8]) -> bool {
+    if bytes.is_empty() || bytes.len() > 512 << 20 {
+        return false;
+    }
+    if crate::metafile::is_metafile(bytes) || deckcraft_svg::is_svg(bytes) || deckcraft_svg::is_svgz(bytes) {
+        return true;
+    }
+    let Ok(reader) = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format() else { return false };
+    if reader.format().is_none() {
+        return false;
+    }
+    reader.into_dimensions().is_ok_and(|(w, h)| fits(w, h, MAX_RGBA))
+}
+
 impl Cache {
     /// Remember that `bytes` doesn't decode, within [`BAD_MAX`] and [`BAD_BUDGET`].
     fn mark_bad(&mut self, addr: usize, bytes: &Arc<Vec<u8>>) {
@@ -594,6 +612,19 @@ mod tests {
         huge[20..24].copy_from_slice(&60_000u32.to_be_bytes());
         assert!(decode_raster(&huge, MAX_RGBA).is_none());
         assert!(!fits(60_000, 60_000, MAX_RGBA) && fits(8192, 8192, MAX_RGBA));
+    }
+
+    #[test]
+    fn decodable_reads_the_header_with_the_decode_limits() {
+        let png = grey_png(4, 2);
+        assert!(decodable(&png));
+        assert!(decodable(br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"/>"#));
+        assert!(!decodable(b""));
+        assert!(!decodable(b"not a picture at all"));
+        let mut huge = png.clone();
+        huge[16..20].copy_from_slice(&60_000u32.to_be_bytes());
+        huge[20..24].copy_from_slice(&60_000u32.to_be_bytes());
+        assert!(!decodable(&huge), "a header claiming more than the RGBA cap is refused");
     }
 
     #[test]

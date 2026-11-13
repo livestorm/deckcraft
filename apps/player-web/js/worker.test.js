@@ -2,7 +2,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue, answerLinkAt } = require('./worker.js')
+const { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue, answerLinkAt, loadImages, openImages, mediaUrl, MAX_IMAGE_FETCHES } = require('./worker.js')
 
 const BASE = 'https://fonts.example/'
 
@@ -189,4 +189,182 @@ test('replies to hit tests nobody waits for are ignored, and a restart answers t
   assert.deepEqual(await b, LINK)
   requests.cancel()
   assert.equal(await c, null)
+})
+
+// Linked pictures: pictures whose bytes live outside the deck, fetched from the host's media
+// prefix only.
+
+const IMG_BASE = 'https://cdn.example/decks/42/'
+
+test('only https URLs under the media prefix may be fetched', () => {
+  assert.equal(mediaUrl(`${IMG_BASE}a.png`, IMG_BASE), `${IMG_BASE}a.png`)
+  assert.equal(mediaUrl(`${IMG_BASE}deep/a.png?sig=1`, IMG_BASE), `${IMG_BASE}deep/a.png?sig=1`)
+  assert.equal(mediaUrl('https://CDN.Example/decks/42/a.png', IMG_BASE), `${IMG_BASE}a.png`, 'the host ignores case')
+  assert.equal(mediaUrl(`${IMG_BASE}a.png#x`, IMG_BASE), `${IMG_BASE}a.png`, 'a fragment is dropped')
+  assert.equal(mediaUrl('https://cdn.example/decks/42/a.png', 'https://cdn.example/decks/42'), `${IMG_BASE}a.png`, 'a prefix without its slash')
+  for (const bad of [
+    'file:///C:/Users/someone/Pictures/photo.png',
+    'C:\\Users\\someone\\photo.png',
+    'photo.png',
+    '',
+    'http://cdn.example/decks/42/a.png',
+    'https://cdn.example/decks/4/a.png',
+    'https://cdn.example.evil.org/decks/42/a.png',
+    'https://other.example/decks/42/a.png',
+    'https://user:pass@cdn.example/decks/42/a.png',
+    `${IMG_BASE}../43/a.png`,
+    `${IMG_BASE}%2e%2e/43/a.png`,
+    `${IMG_BASE}a%2F..%2Fb.png`,
+    `${IMG_BASE}a b.png`,
+    IMG_BASE,
+    `${IMG_BASE}${'a'.repeat(2048)}`,
+  ]) assert.equal(mediaUrl(bad, IMG_BASE), null, bad)
+  for (const base of ['', 'http://cdn.example/', 'https://cdn.example/x?y', 'https://u@cdn.example/', null]) {
+    assert.equal(mediaUrl(`${IMG_BASE}a.png`, base), null, `base ${base}`)
+  }
+})
+
+// A deck of linked pictures as WebPlayer reports them, with the player calls the worker makes.
+function deck (images, { slide = 0, onScreen = () => true, refuse = null } = {}) {
+  const set = []
+  return {
+    set,
+    position: () => [slide, 0],
+    linkedImages: base => (base ? images : []),
+    setLinkedImage: (media, bytes) => {
+      if (refuse && refuse(media)) throw new Error('undecodable')
+      set.push([media, bytes.length])
+      return onScreen(media)
+    },
+  }
+}
+
+const image = (media, url, slides) => ({ media, url: `${IMG_BASE}${url}`, contentType: 'image/png', slides, loaded: false })
+
+// A media server; `hold` keeps a URL's fetch pending until its resolver is called.
+function images ({ fail = [], hold = [], bytes = 4 } = {}) {
+  const asked = []
+  const holds = new Map()
+  const fetch = async (url, opts = {}) => {
+    asked.push({ url, credentials: opts.credentials })
+    if (hold.includes(url)) {
+      await new Promise((resolve, reject) => {
+        holds.set(url, resolve)
+        // As fetch does: an aborted request rejects rather than answering.
+        opts.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+      })
+    }
+    if (fail.includes(url)) return { ok: false, status: 404 }
+    return { ok: true, arrayBuffer: async () => new ArrayBuffer(bytes) }
+  }
+  return { fetch, asked, release: url => holds.get(url)?.() }
+}
+
+test('the first frame waits only for the starting slide’s pictures', async () => {
+  const all = [image(1, 'a.png', [0]), image(2, 'b.png', [1, 2]), image(3, 'c.png', [0, 3])]
+  const player = deck(all)
+  const server = images()
+  const posted = []
+  const later = await openImages({
+    deck: player,
+    base: IMG_BASE,
+    post: m => posted.push(m),
+    current: () => player,
+    schedule: () => {},
+    load: (list, opts) => loadImages(list, { ...opts, fetchFn: server.fetch }),
+  })
+  assert.deepEqual(server.asked.map(a => a.url), [`${IMG_BASE}a.png`, `${IMG_BASE}c.png`], 'only slide 0’s')
+  assert.deepEqual(posted, [{ type: 'images', loaded: 2, failed: 0, bytes: 8, ms: posted[0].ms, slides: [0, 3] }])
+  await later()
+  assert.deepEqual(server.asked.map(a => a.url).slice(2), [`${IMG_BASE}b.png`], 'the rest follow')
+  assert.deepEqual(player.set.map(s => s[0]), [1, 3, 2])
+  assert.equal(posted.length, 2)
+  assert.equal(posted[1].loaded, 1)
+})
+
+test('without a media prefix nothing is ever fetched, whatever the deck names', async () => {
+  const player = deck([image(1, 'a.png', [0])])
+  const server = images()
+  const posted = []
+  const later = await openImages({
+    deck: player,
+    base: null,
+    post: m => posted.push(m),
+    current: () => player,
+    schedule: () => {},
+    load: (list, opts) => loadImages(list, { ...opts, fetchFn: server.fetch }),
+  })
+  await later()
+  assert.deepEqual(server.asked, [])
+  assert.deepEqual(player.set, [])
+  assert.deepEqual(posted, [{ type: 'images', loaded: 0, failed: 0, bytes: 0, ms: posted[0].ms, slides: [] }])
+})
+
+test('a failed fetch, a refused picture and a timeout are reported and leave the others', async () => {
+  const all = [image(1, 'a.png', [0]), image(2, 'b.png', [0]), image(3, 'c.png', [0]), image(4, 'slow.png', [0])]
+  const player = deck(all, { refuse: media => media === 3 })
+  const server = images({ fail: [`${IMG_BASE}b.png`], hold: [`${IMG_BASE}slow.png`] })
+  const posted = []
+  const got = await loadImages(all, {
+    fetchFn: server.fetch,
+    setImage: (media, buf) => {
+      if (!player.setLinkedImage(media, buf)) return
+    },
+    failed: f => posted.push(f),
+    timeoutMs: 20,
+    limit: 4,
+  })
+  assert.equal(got.loaded, 1)
+  assert.equal(got.failed, 3)
+  assert.equal(got.bytes, 4)
+  assert.ok(got.ms >= 0)
+  assert.deepEqual(posted.map(f => [f.url.slice(IMG_BASE.length), f.slide, f.reason]), [
+    ['b.png', 0, 'status 404'],
+    ['c.png', 0, 'undecodable'],
+    ['slow.png', 0, 'timeout'],
+  ])
+  assert.deepEqual(player.set.map(s => s[0]), [1])
+})
+
+test('at most a few pictures are fetched at once', async () => {
+  let inFlight = 0
+  let most = 0
+  const fetchFn = async () => {
+    inFlight++
+    most = Math.max(most, inFlight)
+    await new Promise(resolve => setTimeout(resolve, 5))
+    inFlight--
+    return { ok: true, arrayBuffer: async () => new ArrayBuffer(1) }
+  }
+  const all = Array.from({ length: 20 }, (_, i) => image(i, `p${i}.png`, [0]))
+  const got = await loadImages(all, { fetchFn, setImage: () => {} })
+  assert.equal(got.loaded, 20)
+  assert.ok(most <= MAX_IMAGE_FETCHES, `${most} fetches at once`)
+  assert.ok(most > 1, 'still in parallel')
+})
+
+test('fetches carry the credentials mode the host asked for, and none by default', async () => {
+  const all = [image(1, 'a.png', [0])]
+  const server = images()
+  await loadImages(all, { fetchFn: server.fetch, setImage: () => {}, credentials: 'include' })
+  await loadImages(all, { fetchFn: server.fetch, setImage: () => {} })
+  assert.deepEqual(server.asked.map(a => a.credentials), ['include', undefined])
+})
+
+test('bytes that arrive after the deck was replaced are dropped', async () => {
+  const all = [image(1, 'a.png', [0]), image(2, 'b.png', [1])]
+  const player = deck(all)
+  let current = player
+  const server = images()
+  const later = await openImages({
+    deck: player,
+    base: IMG_BASE,
+    post: () => {},
+    current: () => current,
+    schedule: () => {},
+    load: (list, opts) => loadImages(list, { ...opts, fetchFn: server.fetch }),
+  })
+  current = deck([])
+  await later()
+  assert.deepEqual(player.set.map(s => s[0]), [1], 'slide 0’s picture only: the rest never ran')
 })

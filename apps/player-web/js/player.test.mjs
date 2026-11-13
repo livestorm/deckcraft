@@ -937,3 +937,33 @@ test('a link over several lines is one stop for keyboards and screen readers', (
   assert.equal(first.attrs['aria-hidden'], undefined)
   assert.deepEqual(rest.map(a => [a.tabIndex, a.attrs['aria-hidden']]), [[-1, 'true'], [-1, 'true']])
 })
+
+test('the media prefix and its credentials reach the worker, and `images` is reported', () => {
+  const p = bareCanvasPlayer()
+  p.mediaBase = 'https://cdn.example/decks/42/'
+  p.mediaCredentials = 'include'
+  const sent = []
+  p.worker = { postMessage: m => sent.push(m) }
+  // What start() sends the worker, with the options this player was given.
+  const init = {
+    type: 'init',
+    fontsBase: null,
+    mediaBase: p.mediaBase && new URL(p.mediaBase, 'https://room.example/').href,
+    mediaCredentials: p.mediaCredentials,
+  }
+  p.worker.postMessage(init)
+  assert.deepEqual(sent, [{ type: 'init', fontsBase: null, mediaBase: 'https://cdn.example/decks/42/', mediaCredentials: 'include' }])
+
+  const seen = []
+  p.info = null // the pictures are fetched before `ready`: a failed one must not fail the open
+  p.rejectInit = () => assert.fail('a picture must not fail the player')
+  p.rejectOpen = () => assert.fail('a picture must not fail the deck')
+  p.on('images', m => seen.push(m)).on('metrics', m => seen.push(m)).on('error', e => seen.push(e))
+  p.receive({ type: 'images', loaded: 2, failed: 1, bytes: 2048, ms: 30, slides: [0, 3] })
+  p.receive({ type: 'error', message: 'image-unavailable', url: 'https://cdn.example/decks/42/a.png', slide: 3, reason: 'status 404', fatal: false })
+  assert.deepEqual(seen, [
+    { loaded: 2, failed: 1, bytes: 2048, ms: 30, slides: [0, 3] },
+    { imageMs: 30, imagesLoaded: 2, imagesFailed: 1, imageBytes: 2048 },
+    { type: 'error', message: 'image-unavailable', url: 'https://cdn.example/decks/42/a.png', slide: 3, reason: 'status 404', fatal: false },
+  ])
+})

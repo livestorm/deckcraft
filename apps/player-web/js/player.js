@@ -6,6 +6,10 @@
 // them their own (hashed) URLs, pass those instead: { workerUrl, glueUrl, wasmUrl, fonts }.
 // `fontsBase` is a font server (a Google Fonts mirror): each deck then downloads just the
 // fonts it uses, before its first slide is drawn. `fonts` are added up front either way.
+// `mediaBase` is the https URL prefix the deck's linked pictures (pictures whose bytes live
+// outside it) may be fetched from; without it none are ever fetched, whatever a deck names.
+// `mediaCredentials` is the fetch credentials mode for them; unset, a picture is fetched like the
+// deck itself, fetch(url), which sends cookies only to the page's own origin.
 //   await p.open(url)
 //   p.advance(p.nextOf(p.position)) // a click
 //   p.advance(p.prevOf(p.position)) // Back: to the previous slide, its transition plays reversed
@@ -15,6 +19,10 @@
 //
 // Events (p.on(name, fn)): ready(info), state({slide, step, animating}), metrics(m), error(err),
 // fonts({loaded: [{family, from}], missing: [family]}) with fontsBase,
+// images({loaded, failed, bytes, ms, slides}) per round of linked-picture fetches with mediaBase
+// (the starting slide's first, then the rest). A picture that can't be fetched or drawn gives
+// error({message: 'image-unavailable', url, slide, reason, fatal: false}); the deck plays on, and
+// its box draws as an empty picture, as any picture whose bytes can't be read does,
 // mediaAction({shape, action, at, time}) when someone with controls plays, pauses or seeks a clip
 // themselves; `time` is when, on `clock`. Pass every media action to p.mediaAction(a) on every
 // client, and hand the latest one per clip to someone joining: playing clips keep to it.
@@ -444,12 +452,14 @@ export class NotesRequest {
 }
 
 export class DeckcraftPlayer {
-  constructor (container, { base = '', workerUrl, glueUrl, wasmUrl, fonts = [], fontsBase = null, controls = false, clock = () => Date.now(), linkHoverMs = 100 } = {}) {
+  constructor (container, { base = '', workerUrl, glueUrl, wasmUrl, fonts = [], fontsBase = null, mediaBase = null, mediaCredentials = null, controls = false, clock = () => Date.now(), linkHoverMs = 100 } = {}) {
     this.container = container
     this.base = base
     this.urls = { worker: workerUrl, glue: glueUrl, wasm: wasmUrl }
     this.fonts = fonts
     this.fontsBase = fontsBase
+    this.mediaBase = mediaBase
+    this.mediaCredentials = mediaCredentials
     this.controls = controls
     this.clock = clock
     this.handlers = {}
@@ -515,6 +525,8 @@ export class DeckcraftPlayer {
       canvas: offscreen,
       fonts: this.fonts.map(f => url(f)),
       fontsBase: this.fontsBase && new URL(this.fontsBase, location.href).href,
+      mediaBase: this.mediaBase && new URL(this.mediaBase, location.href).href,
+      mediaCredentials: this.mediaCredentials,
     }, [offscreen])
     this.resizeObserver?.disconnect()
     this.resizeObserver = new ResizeObserver(() => this.resize())
@@ -590,11 +602,22 @@ export class DeckcraftPlayer {
       case 'cues': for (const c of m.cues) this.cue(c.shape, c.action); break
       case 'metrics': this.emit('metrics', m); break
       case 'fonts': this.emit('fonts', { loaded: m.loaded, missing: m.missing }); break
+      case 'images':
+        this.emit('images', { loaded: m.loaded, failed: m.failed, bytes: m.bytes, ms: m.ms, slides: m.slides })
+        this.emit('metrics', { imageMs: m.ms, imagesLoaded: m.loaded, imagesFailed: m.failed, imageBytes: m.bytes })
+        break
       case 'notes':
       case 'notesError': this.notes.settle(m); break
       case 'links': this.showLinks(m.links); break
       case 'linkAt': this.linkRequests.settle(m); break
+      // A picture that can't be fetched or drawn is reported and nothing more: it reaches the
+      // page before `ready` (the first round runs before the first frame), and must not fail the
+      // deck's open.
       case 'error':
+        if (m.message === 'image-unavailable') {
+          this.emit('error', m)
+          break
+        }
         if (!this.info) this.rejectInit(new Error(m.message))
         if (m.fatal) this.crashed(m.message)
         else {

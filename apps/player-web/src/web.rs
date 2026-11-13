@@ -1,5 +1,5 @@
 use deckcraft_player::Frame;
-use deckcraft_player::{LinkRegion, LinkTarget, Player, Pos};
+use deckcraft_player::{LinkRegion, LinkTarget, LinkedImage, MediaId, Player, Pos};
 use js_sys::{Array, Float32Array, Object, Reflect, Uint8Array, Uint8ClampedArray, Uint32Array};
 use wasm_bindgen::prelude::*;
 
@@ -208,6 +208,34 @@ impl WebPlayer {
         Ok(out.into())
     }
 
+    /// The linked pictures (bytes outside the deck) the host may fetch: those under `mediaBase`,
+    /// an `https` URL prefix, `[{media, url, contentType, slides: [index], loaded}]` with `url`
+    /// normalised; the slides are the show's that draw each one. Links elsewhere, `file:` paths
+    /// included, are never listed. `[]` without a `mediaBase`.
+    #[wasm_bindgen(js_name = linkedImages)]
+    pub fn linked_images(&self, media_base: Option<String>) -> Result<JsValue, JsValue> {
+        let out = Array::new();
+        let Some(base) = media_base.filter(|b| !b.is_empty()) else { return Ok(out.into()) };
+        for m in self.inner.linked_images_under(&base) {
+            out.push(&linked_image(&m)?);
+        }
+        Ok(out.into())
+    }
+
+    /// The media ids of the linked pictures slide `slide` draws.
+    #[wasm_bindgen(js_name = slideLinkedImages)]
+    pub fn slide_linked_images(&self, slide: u32) -> Vec<u32> {
+        self.inner.slide_linked_images(slide as usize).into_iter().map(|m| m.0).collect()
+    }
+
+    /// Give a linked picture the bytes fetched for it. Returns whether the slide on screen draws
+    /// it (draw a frame then); throws `too-large`, `deck-budget`, `undecodable` or `unknown`,
+    /// leaving the picture as it was.
+    #[wasm_bindgen(js_name = setLinkedImage)]
+    pub fn set_linked_image(&mut self, media: u32, bytes: Vec<u8>) -> Result<bool, JsError> {
+        self.inner.set_linked_image(MediaId(media), bytes).map_err(|e| JsError::new(&e.to_string()))
+    }
+
     /// The links a viewer can click at the current position, back to front: `[{target, shape,
     /// text, rect: [x, y, w, h], quad: [[x, y] × 4], tooltip, label}]`, in fractions of the slide.
     /// `target` is `{type: 'url', url}` (http, https, mailto or tel only), `{type: 'slide', index,
@@ -230,6 +258,17 @@ impl WebPlayer {
             None => Ok(JsValue::NULL),
         }
     }
+}
+
+fn linked_image(m: &LinkedImage) -> Result<JsValue, JsValue> {
+    let o = Object::new();
+    set(&o, "media", m.media.0)?;
+    set(&o, "url", m.url.as_str())?;
+    set(&o, "contentType", m.content_type.as_str())?;
+    let slides: Array = m.slides.iter().map(|&s| JsValue::from_f64(s as f64)).collect();
+    set(&o, "slides", slides)?;
+    set(&o, "loaded", m.loaded)?;
+    Ok(o.into())
 }
 
 fn region(l: &LinkRegion) -> Result<JsValue, JsValue> {

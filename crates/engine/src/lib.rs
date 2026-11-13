@@ -20,7 +20,8 @@ pub mod inkshape;
 pub mod io;
 pub mod keys;
 pub mod links;
-pub mod media_refs;
+/// Every media reference in the model, found by type; it lives in `deckcraft-model` so the player can use it.
+pub use deckcraft_model::media_refs;
 pub mod recovery;
 pub mod sample;
 pub mod sounds;

@@ -1,6 +1,6 @@
 # DeckCraft architecture
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (native chart payloads stored in bounded ZIP members; previous: minor, community PR wave 2026-10-14: 320 engine commands, 41 dialogs, the `metafile` crate, 1,641 tests; duplicated L2/L5/L6 rows and headers folded; previous: minor, transition frames) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-13 · **Change:** trivial (CI gate split into parallel jobs; previous: minor, native chart payloads stored in bounded ZIP members; previous: minor, community PR wave 2026-10-14: 320 engine commands, 41 dialogs, the `metafile` crate, 1,641 tests; duplicated L2/L5/L6 rows and headers folded; previous: minor, transition frames) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 How DeckCraft is built today. The binding rules (layering, everything is a command, thin UI, never
 break wasm, never crash) are in [AGENTS.md](../AGENTS.md) §3–§5; this document describes what
@@ -72,15 +72,22 @@ overlays an invisible real-text layer with embedded font subsets.
 
 ## Quality gates
 
-`cargo xtask ci`: rustfmt check, clippy `-D warnings`, tests, layering, asset attribution
-(`cargo xtask assets`), wasm32 check. CI runs it on Ubuntu for every PR and push to `main`;
-macOS is built and tested by the release workflow only. Releases (pushes to `release`) build signed
-macOS, Windows, Linux, FreeBSD and web artifacts.
+`cargo xtask ci`: rustfmt check, `pdf-deps`, clippy `-D warnings`, tests and doctests, asset
+attribution (`cargo xtask assets`), layering, wasm32 check. CI runs the same steps on Ubuntu for
+every PR and every push to `main` and `livestorm/main`, as three parallel jobs of the shared gate:
+`cargo xtask lint` (fmt, pdf-deps, clippy, assets, layers), `cargo xtask test` and
+`cargo xtask wasm`, each with its own dependency cache. Pushes to the default branch save the
+caches pull requests restore. The caches hold dependencies only, so the test job builds the
+workspace's own crates at opt-level 0 (dependencies stay at 2) with an 8 MiB test thread stack:
+unoptimised frames are larger, and saving a deck nested to `MAX_GROUP_DEPTH` overflows 2 MiB at
+opt-level 0. macOS is built and tested by the release workflow only. Releases
+(pushes to `release`) build signed macOS, Windows, Linux, FreeBSD and web artifacts.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-13 | trivial | Quality gates: CI runs `cargo xtask ci`'s steps as three parallel jobs (`lint`, `test`, `wasm`) with a cache each, the test job at opt-level 0 with an 8 MiB stack; `pdf-deps` and doctests listed |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-14 | minor | Community PR wave folded: one L2/L5/L6 row each; command registry 320 (`cmd!` registrations in `cmd/*`), 41 dialogs (titled in `dialogs.rs`), 202k lines, 24 crates (`metafile` added at L0), 1,641 tests. The per-PR rows below give the counts each PR saw on its own branch |
 | 2026-10-14 | minor | Size and Position dialog (`shape.sizePosition`): position, size, rotation, scale and lock aspect in one undo step. 227 commands, 28 dialogs |

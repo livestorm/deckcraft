@@ -3,6 +3,29 @@
 What the webinar room has to do to adopt each version of `@livestorm/deckcraft-player`. The API is
 documented in the package's README and at the top of `player.js` and `worker.js`.
 
+## Next version (proposed 0.10.0): linked pictures fetched as their slides come near
+
+0.9.0 fetches every linked picture of a deck right after the first frame, whichever slides a viewer
+sees. Now each viewer fetches only what they are about to see.
+
+**Nothing to change in the room** beyond the version (and the `pnpm-workspace.yaml`
+minimum-release-age exemption, as for 0.9.0). Options, events and messages are the same.
+
+**What the room sees:**
+
+- The slide the deck opens on still has its pictures before the first frame. Then the player
+  fetches the window of the slide on screen: that slide, the next two and the previous one, in the
+  show's order. Every move (Next, Back, a jump, a link) fetches the new window's pictures that
+  haven't been fetched or tried yet, the slide on screen's first. A picture used on several slides
+  is fetched once, and one that failed is not tried again.
+- **The cost: after a jump far away, the slide shows briefly without its pictures** (their boxes
+  draw as empty pictures) until they arrive, then it is drawn again. Moving one slide at a time
+  never shows this once the window has loaded, since the next two slides' pictures are already in.
+- `images` comes more often: once for the opening slide, then once per move that brought new
+  pictures, each with only that round's counts. The room already adds them up.
+- A late joiner who lands on slide 20 still fetches the first slide's pictures before `ready`, as
+  0.9.0 did: `open()` doesn't know where the room will jump. Their window then follows the jump.
+
 ## 0.9.0: pictures fetched from a URL
 
 The player can draw pictures whose bytes live outside the deck (linked pictures): the deck names a

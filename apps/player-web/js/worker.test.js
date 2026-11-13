@@ -2,7 +2,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue, answerLinkAt, loadImages, openImages, mediaUrl, MAX_IMAGE_FETCHES, readCapped } = require('./worker.js')
+const { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue, answerLinkAt, fetchImage, openImages, windowSlides, IMAGE_WINDOW, MAX_DECK_IMAGE_BYTES, MAX_IMAGE_BYTES, mediaUrl, MAX_IMAGE_FETCHES, readCapped } = require('./worker.js')
 
 const BASE = 'https://fonts.example/'
 
@@ -229,6 +229,7 @@ function deck (images, { slide = 0, onScreen = () => true, refuse = null } = {})
   const set = []
   return {
     set,
+    moveTo: s => { slide = s },
     position: () => [slide, 0],
     linkedImages: base => (base ? images : []),
     setLinkedImage: (media, bytes) => {
@@ -260,44 +261,167 @@ function images ({ fail = [], hold = [], bytes = 4 } = {}) {
   return { fetch, asked, release: url => holds.get(url)?.() }
 }
 
-test('the first frame waits only for the starting slide’s pictures', async () => {
-  const all = [image(1, 'a.png', [0]), image(2, 'b.png', [1, 2]), image(3, 'c.png', [0, 3])]
+// Settle every promise that can settle now: pending fetches answer, rounds report.
+const flush = () => new Promise(resolve => setImmediate(resolve))
+
+// openImages on `player` with `server`, posting into `posted`; `order` defaults to slides 0..n-1.
+function open (player, server, { posted = [], order = Array.from({ length: 30 }, (_, i) => i), current = () => player, ...rest } = {}) {
+  return openImages({ deck: player, base: IMG_BASE, post: m => posted.push(m), current, schedule: () => {}, order, fetchFn: server.fetch, ...rest })
+}
+const urls = server => server.asked.map(a => a.url.slice(IMG_BASE.length))
+const rounds = posted => posted.filter(m => m.type === 'images')
+
+test('the window is the slide, the next two and the previous one, in show order', () => {
+  assert.deepEqual(IMAGE_WINDOW, { ahead: 2, behind: 1 })
+  const order = [0, 1, 2, 4, 5, 6] // 3 is hidden
+  assert.deepEqual(windowSlides(order, 2), [2, 4, 5, 1], 'a hidden slide is skipped, not counted')
+  assert.deepEqual(windowSlides(order, 0), [0, 1, 2], 'nothing before the first')
+  assert.deepEqual(windowSlides(order, 6), [6, 5], 'nothing after the last')
+  assert.deepEqual(windowSlides([7, 2, 9, 4], 2), [2, 9, 4, 7], 'a custom show’s order, not the indexes')
+  assert.deepEqual(windowSlides(order, 3), [3], 'a hidden slide jumped to is its own window')
+  assert.deepEqual(windowSlides(order, 2, { ahead: 0, behind: 0 }), [2])
+})
+
+test('the first frame waits only for the starting slide’s pictures, then its window follows', async () => {
+  const all = [image(1, 'a.png', [0]), image(2, 'b.png', [1, 2]), image(3, 'c.png', [0, 3]), image(4, 'd.png', [3]), image(5, 'e.png', [4])]
   const player = deck(all)
   const server = images()
   const posted = []
-  const later = await openImages({
-    deck: player,
-    base: IMG_BASE,
-    post: m => posted.push(m),
-    current: () => player,
-    schedule: () => {},
-    load: (list, opts) => loadImages(list, { ...opts, fetchFn: server.fetch }),
-  })
-  assert.deepEqual(server.asked.map(a => a.url), [`${IMG_BASE}a.png`, `${IMG_BASE}c.png`], 'only slide 0’s')
+  const show = await open(player, server, { posted })
+  assert.deepEqual(urls(server), ['a.png', 'c.png'], 'only slide 0’s')
   assert.deepEqual(posted, [{ type: 'images', loaded: 2, failed: 0, bytes: 8, ms: posted[0].ms, slides: [0, 3] }])
-  await later()
-  assert.deepEqual(server.asked.map(a => a.url).slice(2), [`${IMG_BASE}b.png`], 'the rest follow')
+  await show(0)
+  assert.deepEqual(urls(server).slice(2), ['b.png'], 'slides 1 and 2; c.png is already in; d.png (slide 3) is outside the window')
   assert.deepEqual(player.set.map(s => s[0]), [1, 3, 2])
-  assert.equal(posted.length, 2)
-  assert.equal(posted[1].loaded, 1)
+  assert.equal(rounds(posted).length, 2)
+  assert.deepEqual(rounds(posted)[1].slides, [1, 2])
+})
+
+test('a start part-way through prefetches the slide before it too', async () => {
+  const all = [image(1, 'a.png', [4]), image(2, 'b.png', [5]), image(3, 'c.png', [6]), image(4, 'd.png', [7]), image(5, 'e.png', [3]), image(6, 'f.png', [2])]
+  const player = deck(all, { slide: 4 })
+  const server = images()
+  const show = await open(player, server)
+  await show(4)
+  assert.deepEqual(urls(server), ['a.png', 'b.png', 'c.png', 'e.png'], 'the slide, the next two, then the one before')
 })
 
 test('without a media prefix nothing is ever fetched, whatever the deck names', async () => {
   const player = deck([image(1, 'a.png', [0])])
   const server = images()
   const posted = []
-  const later = await openImages({
-    deck: player,
-    base: null,
-    post: m => posted.push(m),
-    current: () => player,
-    schedule: () => {},
-    load: (list, opts) => loadImages(list, { ...opts, fetchFn: server.fetch }),
-  })
-  await later()
+  const show = await open(player, server, { posted, base: null })
+  await show(0)
+  await show(1)
   assert.deepEqual(server.asked, [])
   assert.deepEqual(player.set, [])
   assert.deepEqual(posted, [{ type: 'images', loaded: 0, failed: 0, bytes: 0, ms: posted[0].ms, slides: [] }])
+})
+
+test('moving forward loads the next window and nothing beyond it', async () => {
+  const all = Array.from({ length: 10 }, (_, i) => image(i, `s${i}.png`, [i]))
+  const player = deck(all)
+  const server = images()
+  const posted = []
+  const show = await open(player, server, { posted })
+  await show(0)
+  assert.deepEqual(urls(server), ['s0.png', 's1.png', 's2.png'])
+  await show(1)
+  assert.deepEqual(urls(server), ['s0.png', 's1.png', 's2.png', 's3.png'], 'only slide 3 is new')
+  await show(2)
+  assert.deepEqual(urls(server).slice(4), ['s4.png'])
+  await show(2)
+  assert.equal(server.asked.length, 5, 'a move within the slide fetches nothing')
+  assert.deepEqual(rounds(posted).map(r => r.slides), [[0], [1, 2], [3], [4]], 'one images message per window with something new')
+})
+
+test('a hidden slide is not counted in the window', async () => {
+  const all = [image(1, 'a.png', [0]), image(2, 'b.png', [1]), image(3, 'c.png', [3]), image(4, 'd.png', [4])]
+  const player = deck(all)
+  const server = images()
+  const show = await open(player, server, { order: [0, 1, 3, 4] })
+  await show(0)
+  assert.deepEqual(urls(server), ['a.png', 'b.png', 'c.png'], 'the next two slides of the show are 1 and 3')
+})
+
+test('a picture several slides use is fetched once', async () => {
+  const logo = image(1, 'logo.png', [0, 1, 2, 3, 4, 5, 6])
+  const all = [logo, image(2, 'b.png', [3]), image(3, 'c.png', [6])]
+  const player = deck(all)
+  const server = images()
+  const show = await open(player, server)
+  const seen = []
+  for (const s of [0, 1, 2, 3, 4, 5, 6, 0, 6]) {
+    await show(s)
+    seen.push(urls(server).join(' '))
+  }
+  assert.deepEqual(seen, [
+    'logo.png',
+    'logo.png b.png',
+    'logo.png b.png',
+    'logo.png b.png',
+    'logo.png b.png c.png',
+    'logo.png b.png c.png',
+    'logo.png b.png c.png',
+    'logo.png b.png c.png',
+    'logo.png b.png c.png',
+  ], 'each window adds only its new pictures; the logo every slide uses is fetched once')
+  assert.deepEqual(player.set.map(s => s[0]), [1, 2, 3])
+})
+
+test('a far jump fetches the new slide’s pictures first and drops the old window’s queue', async () => {
+  // Slide 1 has six pictures: four start, two wait for a slot. Slide 20 has two.
+  const near = Array.from({ length: 6 }, (_, i) => image(10 + i, `near${i}.png`, [1]))
+  const far = [image(30, 'far0.png', [20]), image(31, 'far1.png', [21])]
+  const held = near.slice(0, 4).map(m => m.url)
+  const player = deck([...near, ...far])
+  const server = images({ hold: held })
+  const posted = []
+  const show = await open(player, server, { posted })
+  const old = show(0)
+  await flush()
+  assert.deepEqual(urls(server), ['near0.png', 'near1.png', 'near2.png', 'near3.png'], 'four at once')
+  const jump = show(20)
+  for (const u of held) server.release(u)
+  await Promise.all([old, jump])
+  assert.deepEqual(urls(server).slice(4), ['far0.png', 'far1.png'], 'the new slide first, then its window; near4 and near5 never start')
+  assert.deepEqual(player.set.map(s => s[0]), [10, 11, 12, 13, 30, 31], 'fetches already running finished')
+  assert.deepEqual(rounds(posted).slice(1).map(r => r.loaded), [4, 2], 'each round counts what it started')
+  await show(1)
+  assert.deepEqual(urls(server).slice(6), ['near4.png', 'near5.png'], 'dropped, not lost: coming back fetches them')
+})
+
+test('a failed picture is not fetched again on later moves', async () => {
+  const all = [image(1, 'a.png', [0]), image(2, 'bad.png', [4, 5])]
+  const player = deck(all)
+  const server = images({ fail: [`${IMG_BASE}bad.png`] })
+  const posted = []
+  const show = await open(player, server, { posted })
+  await show(0)
+  assert.deepEqual(urls(server), ['a.png'], 'slide 4 is outside the first window')
+  for (const s of [2, 3, 4, 5, 4, 0, 4, 5]) await show(s)
+  assert.deepEqual(urls(server), ['a.png', 'bad.png'], 'tried once, when its window came, never again')
+  assert.deepEqual(posted.filter(m => m.type === 'error').map(m => [m.message, m.url.slice(IMG_BASE.length), m.reason, m.fatal]), [['image-unavailable', 'bad.png', 'status 404', false]])
+})
+
+test('one deck budget holds across every window', async () => {
+  // 30 MiB each, under the per-picture cap: eight fit in the deck's 256 MiB, the ninth would not.
+  const size = 30 * 1024 * 1024
+  const all = Array.from({ length: 12 }, (_, i) => image(i, `s${i}.png`, [i]))
+  const player = deck(all)
+  const server = images({ bytes: size })
+  const posted = []
+  const show = await open(player, server, { posted })
+  const asked = []
+  for (let s = 0; s < 12; s++) {
+    await show(s)
+    asked.push(server.asked.length)
+  }
+  assert.ok(8 * size <= MAX_DECK_IMAGE_BYTES && 9 * size > MAX_DECK_IMAGE_BYTES)
+  assert.deepEqual(asked, [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 12, 12], 'one more slide’s picture per move')
+  assert.deepEqual(player.set.map(s => s[0]), [0, 1, 2, 3, 4, 5, 6, 7], 'spread over several windows, still one budget')
+  assert.deepEqual(posted.filter(m => m.type === 'error').map(m => m.reason), ['deck-budget', 'deck-budget', 'deck-budget', 'deck-budget'])
+  assert.equal(rounds(posted).reduce((n, r) => n + r.bytes, 0), 8 * size)
 })
 
 test('a failed fetch, a refused picture and a timeout are reported and leave the others', async () => {
@@ -305,65 +429,59 @@ test('a failed fetch, a refused picture and a timeout are reported and leave the
   const player = deck(all, { refuse: media => media === 3 })
   const server = images({ fail: [`${IMG_BASE}b.png`], hold: [`${IMG_BASE}slow.png`] })
   const posted = []
-  const got = await loadImages(all, {
-    fetchFn: server.fetch,
-    setImage: (media, buf) => {
-      if (!player.setLinkedImage(media, buf)) return
-    },
-    failed: f => posted.push(f),
-    timeoutMs: 20,
-    limit: 4,
-  })
+  await open(player, server, { posted, timeoutMs: 20 })
+  const [got] = rounds(posted)
   assert.equal(got.loaded, 1)
   assert.equal(got.failed, 3)
   assert.equal(got.bytes, 4)
   assert.ok(got.ms >= 0)
-  assert.deepEqual(posted.map(f => [f.url.slice(IMG_BASE.length), f.slide, f.reason]), [
-    ['b.png', 0, 'status 404'],
-    ['c.png', 0, 'undecodable'],
-    ['slow.png', 0, 'timeout'],
+  assert.deepEqual(posted.filter(m => m.type === 'error').map(f => [f.message, f.url.slice(IMG_BASE.length), f.slide, f.reason, f.fatal]), [
+    ['image-unavailable', 'b.png', 0, 'status 404', false],
+    ['image-unavailable', 'c.png', 0, 'undecodable', false],
+    ['image-unavailable', 'slow.png', 0, 'timeout', false],
   ])
   assert.deepEqual(player.set.map(s => s[0]), [1])
 })
 
-test('at most a few pictures are fetched at once', async () => {
+test('at most a few pictures are fetched at once, across windows', async () => {
   let inFlight = 0
   let most = 0
-  const fetchFn = async () => {
+  const fetch = async () => {
     inFlight++
     most = Math.max(most, inFlight)
     await new Promise(resolve => setTimeout(resolve, 5))
     inFlight--
     return { ok: true, arrayBuffer: async () => new ArrayBuffer(1) }
   }
-  const all = Array.from({ length: 20 }, (_, i) => image(i, `p${i}.png`, [0]))
-  const got = await loadImages(all, { fetchFn, setImage: () => {} })
-  assert.equal(got.loaded, 20)
+  const all = Array.from({ length: 40 }, (_, i) => image(i, `p${i}.png`, [i % 4]))
+  const player = deck(all)
+  const posted = []
+  const show = await open(player, { fetch }, { posted })
+  await Promise.all([show(0), show(1), show(2)])
+  assert.equal(rounds(posted).reduce((n, r) => n + r.loaded, 0), 40)
   assert.ok(most <= MAX_IMAGE_FETCHES, `${most} fetches at once`)
   assert.ok(most > 1, 'still in parallel')
 })
 
 test('fetches carry the credentials mode the host asked for, and none by default', async () => {
-  const all = [image(1, 'a.png', [0])]
   const server = images()
-  await loadImages(all, { fetchFn: server.fetch, setImage: () => {}, credentials: 'include' })
-  await loadImages(all, { fetchFn: server.fetch, setImage: () => {} })
+  await open(deck([image(1, 'a.png', [0])]), server, { credentials: 'include' })
+  await open(deck([image(1, 'a.png', [0])]), server)
   assert.deepEqual(server.asked.map(a => a.credentials), ['include', undefined])
 })
 
 test('a redirect is never followed, so a fetch cannot leave the media prefix', async () => {
-  const all = [image(1, 'a.png', [0])]
   const failed = []
   // As fetch does with redirect: 'error': a redirect response rejects.
   const fetchFn = async (url, opts) => {
     assert.equal(opts.redirect, 'error')
     throw new TypeError('Failed to fetch')
   }
-  const got = await loadImages(all, { fetchFn, setImage: () => assert.fail('no bytes'), failed: f => failed.push(f) })
-  assert.equal(got.failed, 1)
+  const got = await fetchImage(image(1, 'a.png', [0]), { fetchFn, setImage: () => assert.fail('no bytes'), failed: f => failed.push(f) })
+  assert.equal(got, null)
   assert.equal(failed[0].url, `${IMG_BASE}a.png`)
   const server = images()
-  await loadImages(all, { fetchFn: server.fetch, setImage: () => {} })
+  await open(deck([image(1, 'a.png', [0])]), server)
   assert.deepEqual(server.asked.map(a => a.redirect), ['error'])
 })
 
@@ -406,29 +524,30 @@ test('the deck’s total budget is spent as bytes arrive and refuses the picture
 
 test('an oversized picture is reported, and the others still load', async () => {
   const all = [image(1, 'big.png', [0]), image(2, 'a.png', [0])]
-  const failed = []
-  const set = []
-  const fetchFn = async url => (url.endsWith('big.png') ? streamed(100, 1024) : streamed(1, 16))
-  const got = await loadImages(all, { fetchFn, setImage: m => set.push(m), failed: f => failed.push(f), maxBytes: 4096 })
-  assert.deepEqual(failed.map(f => f.reason), ['too-large'])
-  assert.deepEqual(set, [2])
-  assert.equal(got.bytes, 16)
+  const player = deck(all)
+  const fetch = async url => (url.endsWith('big.png') ? streamed(MAX_IMAGE_BYTES / 1024 + 1, 1024) : streamed(1, 16))
+  const posted = []
+  await open(player, { fetch }, { posted })
+  assert.deepEqual(posted.filter(m => m.type === 'error').map(f => f.reason), ['too-large'])
+  assert.deepEqual(player.set.map(s => s[0]), [2])
+  assert.equal(rounds(posted)[0].bytes, 16)
 })
 
-test('bytes that arrive after the deck was replaced are dropped', async () => {
-  const all = [image(1, 'a.png', [0]), image(2, 'b.png', [1])]
+test('bytes that arrive after the deck was replaced are dropped, and nothing more starts', async () => {
+  const all = [image(1, 'a.png', [0]), image(2, 'b.png', [1]), image(3, 'c.png', [2]), image(4, 'd.png', [3])]
   const player = deck(all)
   let current = player
-  const server = images()
-  const later = await openImages({
-    deck: player,
-    base: IMG_BASE,
-    post: () => {},
-    current: () => current,
-    schedule: () => {},
-    load: (list, opts) => loadImages(list, { ...opts, fetchFn: server.fetch }),
-  })
+  const server = images({ hold: [`${IMG_BASE}b.png`] })
+  const posted = []
+  const show = await open(player, server, { posted, current: () => current, limit: 1 })
+  const window = show(0)
+  await flush()
+  assert.deepEqual(urls(server), ['a.png', 'b.png'], 'b.png is running, c.png waits')
   current = deck([])
-  await later()
-  assert.deepEqual(player.set.map(s => s[0]), [1], 'slide 0’s picture only: the rest never ran')
+  server.release(`${IMG_BASE}b.png`)
+  await window
+  await show(3)
+  assert.deepEqual(player.set.map(s => s[0]), [1], 'slide 0’s picture only')
+  assert.deepEqual(urls(server), ['a.png', 'b.png'], 'nothing started after the deck was replaced')
+  assert.equal(rounds(posted).length, 1, 'and nothing reported for it')
 })

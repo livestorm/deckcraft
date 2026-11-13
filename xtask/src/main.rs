@@ -26,6 +26,8 @@ commands:
   test            workspace tests (cargo nextest when installed, else cargo test), then doctests
   ci              fmt --check, pdf-deps, clippy -D warnings, test, doctest, assets, layers, wasm
                   (stops at first failure)
+  lint            the steps of `ci` that are not test or wasm: fmt --check, pdf-deps, clippy,
+                  assets, layers (CI runs it beside `test` and `wasm`, as parallel jobs)
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
   bench [--save] [DECK...]
                   time open, render, save and export of the sample (and DECKs) in release, and
@@ -44,7 +46,8 @@ fn main() -> ExitCode {
         Some("pdf-deps") => pdf_deps::run(&root()),
         Some("wasm") => cmd_wasm(),
         Some("test") => cmd_test().and_then(|()| cmd_doctest()),
-        Some("ci") => cmd_ci(),
+        Some("ci") => cmd_ci(None),
+        Some("lint") => cmd_ci(Some(&LINT_STEPS)),
         Some("stats") => stats::run(&root(), rest.contains(&"--exact")),
         Some("parity") => parity::run(&root()),
         Some("bench") => bench::run(&root(), &rest),
@@ -186,9 +189,14 @@ fn cmd_doctest() -> Result<(), String> {
     run(c, "cargo test --workspace --doc")
 }
 
-fn cmd_ci() -> Result<(), String> {
+/// The `ci` steps `lint` runs. With `test` (test and doctest) and `wasm`, they are every step of
+/// `ci`, so the parallel CI jobs check what `cargo xtask ci` checks.
+const LINT_STEPS: [&str; 5] = ["fmt", "pdf-deps", "clippy", "assets", "layers"];
+
+/// Runs the `ci` steps in order, or only those named in `only`.
+fn cmd_ci(only: Option<&[&str]>) -> Result<(), String> {
     type Step = (&'static str, Box<dyn Fn() -> Result<(), String>>);
-    let steps: Vec<Step> = vec![
+    let all: Vec<Step> = vec![
         (
             "fmt",
             Box::new(|| {
@@ -212,6 +220,11 @@ fn cmd_ci() -> Result<(), String> {
         ("layers", Box::new(cmd_layers)),
         ("wasm", Box::new(cmd_wasm)),
     ];
+    // A name that matches no step would silently drop a check from the parallel jobs.
+    if let Some(unknown) = only.into_iter().flatten().find(|n| !all.iter().any(|(name, _)| name == *n)) {
+        return Err(format!("no ci step named `{unknown}`"));
+    }
+    let steps: Vec<Step> = all.into_iter().filter(|(name, _)| only.is_none_or(|o| o.contains(name))).collect();
     let mut done = Vec::new();
     for (name, f) in &steps {
         eprintln!("\n=== ci: {name} ===");

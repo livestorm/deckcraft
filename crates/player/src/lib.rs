@@ -11,6 +11,8 @@
 //!   effects (Play, Pause, Stop) the show reached, for the host page to carry out.
 //! - [`Player::links`] and [`Player::link_at`]: the hyperlinks a viewer can click at the current
 //!   position, and the one under a point, with typed targets ([`LinkTarget`]).
+//! - [`Player::linked_images`] and [`Player::set_linked_image`]: pictures whose bytes live outside
+//!   the deck, for the host to fetch (only under its own media prefix, [`media_url`]) and hand in.
 //!
 //! Embedded audio and video are not played here: [`Player::media`] hands their bytes and boxes to
 //! the host, whose own players have sound.
@@ -26,12 +28,17 @@ use deckcraft_render::{
     Image, ParaState, PathMorph, RenderOpts, ShapeState, SlideParts, TextMorph, composite_transition, render_blend, render_slide,
 };
 
+mod linked;
 mod links;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_linked;
+#[cfg(test)]
 mod tests_links;
 
+pub use deckcraft_model::MediaId;
+pub use linked::{LinkedImage, LinkedImageError, MAX_LINKED_IMAGE_BYTES, MAX_LINKED_IMAGES, MAX_LINKED_TOTAL_BYTES, MAX_MEDIA_URL_LEN, media_url};
 pub use links::{LinkRegion, LinkTarget, MAX_LABEL_CHARS, MAX_LINKS, MAX_URL_LEN};
 
 /// Largest frame width rendered, whatever the host asks for.
@@ -188,6 +195,8 @@ pub struct Player {
     entry_media: bool,
     /// The shown slide's shapes and links as laid out, for [`Player::links`].
     placement: Option<links::Placement>,
+    /// The show's linked pictures and the bytes set for them.
+    linked: linked::Linked,
 }
 
 impl Player {
@@ -201,6 +210,7 @@ impl Player {
         let Some(&first) = order.first() else { return Err(OpenError::Empty) };
         let timelines = pres.slides.iter().map(|s| Timeline::new(s, pres.slide_size.width, pres.slide_size.height)).collect();
         let warnings = lost.into_iter().map(|part| format!("slide {part} could not be read and is left out")).collect();
+        let linked = linked::Linked::find(&pres, &order);
         let mut player = Player {
             pres,
             order,
@@ -215,6 +225,7 @@ impl Player {
             gpu_transitions: false,
             entry_media: true,
             placement: None,
+            linked,
         };
         player.resize(1280);
         player.pos = player.entry(first);

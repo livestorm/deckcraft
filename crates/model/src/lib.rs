@@ -13,6 +13,7 @@ pub mod chart;
 pub mod defaults;
 pub mod edit;
 pub mod fonts;
+pub mod media_refs;
 pub mod numfmt;
 pub mod resolve;
 pub mod style;

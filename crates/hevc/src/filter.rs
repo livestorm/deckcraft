@@ -423,10 +423,7 @@ fn sao_ctb(
                 return false;
             }
         }
-        if !pic.pps.loop_filter_across_tiles && pic.layout.tile_id[pic.layout.rs_to_ts[nrs] as usize] != pic.layout.tile_id[cur_ts as usize] {
-            return false;
-        }
-        true
+        pic.pps.loop_filter_across_tiles || pic.layout.tile_id[pic.layout.rs_to_ts[nrs] as usize] == pic.layout.tile_id[cur_ts as usize]
     };
     let edge_map = [1usize, 2, 0, 3, 4];
     // Offset per (2 + sum of neighbour signs); edgeIdx 0 adds nothing.

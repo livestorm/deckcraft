@@ -1,7 +1,8 @@
 // DeckCraft player worker: owns the deck and the canvas; the page sends positions and gets
 // pictures drawn, media clips and media cues back.
 //
-// In:  {type: 'init', glueUrl, wasmUrl, canvas: OffscreenCanvas, fonts: [url], fontsBase}
+// In:  {type: 'init', glueUrl, wasmUrl, canvas: OffscreenCanvas, fonts: [url], fontsBase,
+//        mediaBase, mediaCredentials}
 //      {type: 'open', url} | {type: 'open', bytes: ArrayBuffer}
 //      {type: 'resize', width}
 //      {type: 'jump', slide, step} | {type: 'advance', slide, step}
@@ -12,6 +13,10 @@
 // Out: {type: 'initialized', loadMs}
 //      {type: 'fonts', loaded: [{family, from}], missing: [family]} when fontsBase is set
 //      {type: 'ready', info, media, openMs}
+//      {type: 'images', loaded, failed, bytes, ms, slides: [index]}: the deck's linked pictures
+//        (pictures whose bytes live outside it) fetched, with mediaBase set. Sent once the
+//        starting slide's are in, before the first frame, and again when the rest have been
+//        fetched; `slides` are the slides whose pictures arrived in that round
 //      {type: 'state', slide, step, animating}
 //      {type: 'cues', cues: [{shape, action}]}
 //      {type: 'metrics', frameMs, width, height}
@@ -23,13 +28,17 @@
 //        fractions of the slide; target: {type: 'url', url} (http, https, mailto or tel),
 //        {type: 'slide', index, fileId}, or {type: 'nextSlide' | 'previousSlide' | 'firstSlide' |
 //        'lastSlide' | 'endShow'}
-//      {type: 'error', message, fatal}
+//      {type: 'error', message, fatal}: fatal only for a trap in the module or a failed init;
+//        a linked picture that can't be fetched or drawn is {message: 'image-unavailable', url,
+//        slide, reason, fatal: false} and leaves the deck playing
 
 /* global wasm_bindgen */ // declared by deckcraft_player.js, imported below
 
 let player = null
 let canvas = null
 let fontsBase = null
+let mediaBase = null
+let mediaCredentials = null
 let ctx = null // 2D fallback when WebGL2 isn't available
 let gl = null
 let scheduled = false
@@ -195,6 +204,127 @@ async function loadFonts (requests, base, fetchFn = fetch) {
   return (await Promise.all(requests.map(one))).filter(Boolean)
 }
 
+// Linked pictures: a deck can name pictures whose bytes live outside it (PowerPoint's Link to
+// File, or a media service that takes large pictures out of the copy viewers download). The module
+// lists only those under `mediaBase`, normalised; without `mediaBase` nothing is ever fetched.
+//
+// At most this many picture fetches at once, and this long for one of them.
+const MAX_IMAGE_FETCHES = 4
+const IMAGE_TIMEOUT_MS = 20000
+// Longest URL fetched for a picture.
+const MAX_MEDIA_URL = 2048
+// Most bytes read for one picture, and for all of one deck's: the player's own limits
+// (MAX_LINKED_IMAGE_BYTES, MAX_LINKED_TOTAL_BYTES), applied while downloading so an oversized
+// response is dropped before it is held in memory.
+const MAX_IMAGE_BYTES = 32 * 1024 * 1024
+const MAX_DECK_IMAGE_BYTES = 256 * 1024 * 1024
+
+// A response's body as bytes, read as it arrives and abandoned once it passes `max` bytes or the
+// deck's remaining `budget` ({left}), whichever is smaller. The budget is spent as bytes arrive.
+async function readCapped (r, max, budget) {
+  const limit = () => Math.min(max, budget.left)
+  const declared = Number(r.headers?.get?.('content-length'))
+  if (Number.isFinite(declared) && declared > limit()) throw new Error(declared > max ? 'too-large' : 'deck-budget')
+  const tooBig = n => new Error(n > max ? 'too-large' : 'deck-budget')
+  if (!r.body?.getReader) {
+    const buf = new Uint8Array(await r.arrayBuffer())
+    if (buf.byteLength > limit()) throw tooBig(buf.byteLength)
+    budget.left -= buf.byteLength
+    return buf
+  }
+  const reader = r.body.getReader()
+  const chunks = []
+  let n = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      n += value.byteLength
+      if (n > limit()) throw tooBig(n)
+      chunks.push(value)
+    }
+  } catch (err) {
+    reader.cancel().catch(() => {})
+    throw err
+  }
+  budget.left -= n
+  const out = new Uint8Array(n)
+  let at = 0
+  for (const c of chunks) {
+    out.set(c, at)
+    at += c.byteLength
+  }
+  return out
+}
+
+// `url` as it may be fetched for a deck: an https URL under `base`, the host's media prefix. The
+// player applies this rule too (deckcraft_player::media_url) and lists only what passes it; it is
+// applied again here, as link URLs are, so nothing reaches `fetch` that the page didn't allow.
+// Rejected: any other scheme (`file:` above all, which PowerPoint's Link to File writes), another
+// origin, credentials in the URL, dot segments encoded or not, backslashes, spaces.
+function mediaUrl (url, base) {
+  const clean = s => typeof s === 'string' && s.length <= MAX_MEDIA_URL && /^[\x21-\x7e]*$/.test(s) && !s.includes('\\')
+  if (!clean(url) || !clean(base)) return null
+  let prefix, target
+  try {
+    prefix = new URL(base)
+    target = new URL(url)
+  } catch { return null }
+  if (prefix.protocol !== 'https:' || prefix.search || prefix.hash || prefix.username || prefix.password) return null
+  if (target.protocol !== 'https:' || target.username || target.password) return null
+  if (target.origin !== prefix.origin) return null
+  const dir = prefix.pathname.endsWith('/') ? prefix.pathname : `${prefix.pathname}/`
+  // `new URL` already resolves `..`; compare the resolved path, and refuse encoded separators.
+  if (!target.pathname.startsWith(dir) || target.pathname === dir) return null
+  if (/%2e|%2f|%5c/i.test(target.pathname)) return null
+  return `${target.origin}${target.pathname}${target.search}`
+}
+
+// Run `tasks` (functions returning promises), at most `limit` of them at a time, started in order.
+// A task that throws is left to its own catch.
+async function pool (tasks, limit) {
+  let next = 0
+  const run = async () => {
+    while (next < tasks.length) await tasks[next++]()
+  }
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, tasks.length)) }, run))
+}
+
+// Fetch `images` ([{media, url, slides}]) and hand each one's bytes to `setImage(media, bytes)`,
+// at most MAX_IMAGE_FETCHES at a time, each abandoned after IMAGE_TIMEOUT_MS. Neither a failed
+// fetch nor bytes the player refuses stops the others: each is reported through `failed` and the
+// deck plays on. Resolves to the counts for the `images` message.
+async function loadImages (images, { fetchFn = fetch, setImage, failed = () => {}, credentials = null, timeoutMs = IMAGE_TIMEOUT_MS, limit = MAX_IMAGE_FETCHES, maxBytes = MAX_IMAGE_BYTES, budget = { left: MAX_DECK_IMAGE_BYTES } } = {}) {
+  const t0 = performance.now()
+  let loaded = 0
+  let bytes = 0
+  const slides = new Set()
+  const fails = []
+  const one = async img => {
+    const stop = new AbortController()
+    const timer = setTimeout(() => stop.abort(), timeoutMs)
+    try {
+      // A redirect is never followed: it could leave the media prefix that `mediaUrl` checked, and
+      // with credentials take them to another origin. A media server serves pictures in place.
+      const r = await fetchFn(img.url, { signal: stop.signal, redirect: 'error', ...(credentials ? { credentials } : {}) })
+      if (!r.ok) throw new Error(`status ${r.status}`)
+      const buf = await readCapped(r, maxBytes, budget)
+      setImage(img.media, buf)
+      loaded++
+      bytes += buf.byteLength
+      for (const s of img.slides || []) slides.add(s)
+    } catch (err) {
+      const reason = stop.signal.aborted ? 'timeout' : String(err && err.message ? err.message : err)
+      fails.push({ url: img.url, slide: img.slides?.[0] ?? null, reason })
+      failed(fails[fails.length - 1])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+  await pool(images.map(img => () => one(img)), limit)
+  return { loaded, failed: fails.length, bytes, ms: performance.now() - t0, slides: [...slides] }
+}
+
 const now = () => performance.now() / 1000
 const post = (msg, transfer) => self.postMessage(msg, transfer || [])
 
@@ -267,9 +397,11 @@ function answerLinkAt ({ id, x, y }, { linkAt, post, failed = () => {} }) {
   post({ type: 'linkAt', id, link })
 }
 
-async function init ({ glueUrl, wasmUrl, canvas: c, fonts, fontsBase: fb }) {
+async function init ({ glueUrl, wasmUrl, canvas: c, fonts, fontsBase: fb, mediaBase: mb, mediaCredentials: mc }) {
   const t0 = performance.now()
   fontsBase = fb || null
+  mediaBase = mb || null
+  mediaCredentials = mc || null
   self.importScripts(glueUrl)
   await wasm_bindgen({ module_or_path: wasmUrl })
   const files = await Promise.all((fonts || []).map(url => fetch(url).then(r => (r.ok ? r.arrayBuffer() : null)).catch(() => null)))
@@ -299,12 +431,48 @@ async function open ({ url, bytes, download }) {
     post({ type: 'fonts', loaded: loaded.map(f => ({ family: f.family || null, from: f.from })), missing: [...new Set(missing)] })
   }
   player.setGpuTransitions(!!gl)
+  // Linked pictures, before the first frame for the slide it starts on, so the audience never sees
+  // it without them; the rest follow, and the slide on screen is drawn again if one belongs to it.
+  const later = mediaBase ? await openImages({ deck: player, base: mediaBase, credentials: mediaCredentials, post, current: () => player, schedule }) : null
   const media = player.media()
   post({ type: 'ready', info: player.info(), media, openMs: performance.now() - t0 }, media.map(m => m.data.buffer))
   lastState = ''
   lastLinks = ''
   ready = true
   schedule()
+  // The rest of the pictures download outside the queue, so jumps and resizes keep their turn.
+  later?.().catch(err => fail(err))
+}
+
+// Fetch the deck's linked pictures: the starting slide's now, the rest when the returned function
+// is run (after the first frame, outside the queue). Both report an `images` message. Nothing here
+// is fatal: a deck whose pictures can't be fetched still plays.
+// `deck` is the player these pictures belong to; `current()` gives the worker's player, so bytes
+// that arrive after another `open` (or a crash) replaced it are dropped instead of reaching the
+// deck now on screen.
+async function openImages ({ deck, base, credentials, post, current, schedule, load = loadImages }) {
+  const [slide] = deck.position()
+  const all = deck.linkedImages(base).filter(m => mediaUrl(m.url, base))
+  const opts = {
+    setImage: (media, buf) => {
+      if (current() !== deck) return
+      try {
+        if (deck.setLinkedImage(media, buf)) schedule()
+      } catch (err) {
+        throw new Error(String(err && err.message ? err.message : err))
+      }
+    },
+    failed: f => post({ type: 'error', message: 'image-unavailable', url: f.url, slide: f.slide, reason: f.reason, fatal: false }),
+    credentials,
+    // One budget for the deck's two rounds.
+    budget: { left: MAX_DECK_IMAGE_BYTES },
+  }
+  const first = all.filter(m => m.slides.includes(slide))
+  post({ type: 'images', ...(await load(first, opts)) })
+  const rest = all.filter(m => !m.slides.includes(slide))
+  return async () => {
+    if (rest.length && current() === deck) post({ type: 'images', ...(await load(rest, opts)) })
+  }
 }
 
 // Speaker notes of another deck by file slide id, for a presenter on the attendee copy. The download
@@ -347,7 +515,7 @@ function enqueue (task) {
 
 if (typeof module === 'object' && module.exports) {
   // Node, for the tests (worker.test.js).
-  module.exports = { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue, answerLinkAt }
+  module.exports = { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue, answerLinkAt, loadImages, openImages, mediaUrl, readCapped, MAX_IMAGE_BYTES, pool, MAX_IMAGE_FETCHES, IMAGE_TIMEOUT_MS }
 } else {
   // An `open`'s download starts at once, alongside the module's; so does a notes download.
   self.onmessage = ({ data }) => {

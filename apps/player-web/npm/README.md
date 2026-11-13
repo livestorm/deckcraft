@@ -77,6 +77,46 @@ Any error response means the family isn't there. The server must send CORS heade
 The `fonts` event lists what was loaded and the families that found nothing. You can still pass
 font files of your own as `fonts: [url]`; they load before any deck.
 
+## Pictures fetched from a URL
+
+A deck can name pictures whose bytes live outside it: PowerPoint writes them for Insert > Picture >
+Link to File, and a media service can take large pictures out of the copy viewers download and link
+them instead, as it does for large videos. The player draws them once it has their bytes.
+
+**It never fetches a URL just because a deck names one.** Pass `mediaBase`, the `https` URL prefix
+the pictures may come from — the path the decks themselves are served from:
+
+```js
+const player = new DeckcraftPlayer(container, { mediaBase: MEDIA_CDN, mediaCredentials: 'include' })
+player.on('images', ({ loaded, failed, bytes, ms, slides }) => console.log(loaded, failed))
+player.on('error', e => { if (e.message === 'image-unavailable') console.warn(e.url, e.reason) })
+```
+
+- Without `mediaBase`, nothing is ever fetched, whatever a deck names.
+- A picture is fetched only if its URL is `https`, on `mediaBase`'s own origin and under its path,
+  with no user name or password, no `..` (encoded or not), no encoded separator, backslash, space
+  or control character, and no more than 2048 characters. Everything else is left alone and draws
+  nothing, `file:` paths above all: Link to File writes a local path, which is not the viewer's.
+  The rule is applied by the module and again by the worker, and redirects are never followed:
+  a redirect fails the picture, so a URL under `mediaBase` can't send the browser elsewhere.
+- `mediaCredentials` is the fetch credentials mode for pictures (`'include'`, `'same-origin'`,
+  `'omit'`). Unset, a picture is fetched like the deck itself, `fetch(url)`, whose default mode
+  sends cookies only to the page's own origin. A cross-origin path serving them must send CORS
+  headers, plus `Access-Control-Allow-Credentials: true` for `'include'`.
+- The slide the deck opens on has its pictures before the first frame; the rest follow, and the
+  slide on screen is drawn again as they arrive. At most 4 fetches at once, 20 s each, 32 MB per
+  picture, 256 MB and 512 pictures per deck.
+- A picture that can't be fetched, or whose bytes aren't a picture this player draws, gives `error`
+  with `{message: 'image-unavailable', url, slide, reason, fatal: false}`; the deck plays on and it
+  never fails `open()`. Its box draws as an empty picture (a light grey rectangle with a cross), as
+  any picture whose bytes can't be read does.
+- `images({loaded, failed, bytes, ms, slides})` reports each round, and `metrics` carries the same
+  counts as `imagesLoaded`, `imagesFailed`, `imageBytes` and `imageMs`.
+
+Worker protocol: `mediaBase` and `mediaCredentials` are `init` options; the worker sends
+`{type: 'images', loaded, failed, bytes, ms, slides}` per round and
+`{type: 'error', message: 'image-unavailable', url, slide, reason, fatal: false}` per failure.
+
 ## Speaker notes for presenters
 
 Attendees should open a copy of the deck without its speaker notes. Hidden slides are removed from

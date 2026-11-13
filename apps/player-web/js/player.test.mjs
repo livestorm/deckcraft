@@ -937,3 +937,33 @@ test('a link over several lines is one stop for keyboards and screen readers', (
   assert.equal(first.attrs['aria-hidden'], undefined)
   assert.deepEqual(rest.map(a => [a.tabIndex, a.attrs['aria-hidden']]), [[-1, 'true'], [-1, 'true']])
 })
+
+test('the media prefix and its credentials reach the worker, and `images` is reported', () => {
+  const p = bareCanvasPlayer()
+  Object.assign(p, { base: '/deckcraft/', urls: {}, fonts: [], fontsBase: null, mediaBase: '/media/decks/42/', mediaCredentials: 'include' })
+  // The message start() posts, built by the same method.
+  const init = p.initMessage('the canvas', 'https://room.example/webinar/1')
+  assert.equal(init.type, 'init')
+  assert.equal(init.canvas, 'the canvas')
+  assert.equal(init.mediaBase, 'https://room.example/media/decks/42/', 'resolved against the page')
+  assert.equal(init.mediaCredentials, 'include')
+  assert.equal(init.wasmUrl, 'https://room.example/deckcraft/deckcraft_player_bg.wasm')
+  p.mediaBase = null
+  p.mediaCredentials = null
+  const none = p.initMessage('the canvas', 'https://room.example/webinar/1')
+  assert.equal(none.mediaBase, null, 'no prefix: nothing will be fetched')
+  assert.equal(none.mediaCredentials, null)
+
+  const seen = []
+  p.info = null // the pictures are fetched before `ready`: a failed one must not fail the open
+  p.rejectInit = () => assert.fail('a picture must not fail the player')
+  p.rejectOpen = () => assert.fail('a picture must not fail the deck')
+  p.on('images', m => seen.push(m)).on('metrics', m => seen.push(m)).on('error', e => seen.push(e))
+  p.receive({ type: 'images', loaded: 2, failed: 1, bytes: 2048, ms: 30, slides: [0, 3] })
+  p.receive({ type: 'error', message: 'image-unavailable', url: 'https://cdn.example/decks/42/a.png', slide: 3, reason: 'status 404', fatal: false })
+  assert.deepEqual(seen, [
+    { loaded: 2, failed: 1, bytes: 2048, ms: 30, slides: [0, 3] },
+    { imageMs: 30, imagesLoaded: 2, imagesFailed: 1, imageBytes: 2048 },
+    { type: 'error', message: 'image-unavailable', url: 'https://cdn.example/decks/42/a.png', slide: 3, reason: 'status 404', fatal: false },
+  ])
+})

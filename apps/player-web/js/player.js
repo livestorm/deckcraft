@@ -518,19 +518,27 @@ export class DeckcraftPlayer {
     })
     this.worker.onmessage = ({ data }) => this.receive(data)
     this.worker.onerror = e => this.crashed(e.message || 'the player stopped')
-    this.worker.postMessage({
-      type: 'init',
-      glueUrl: url(this.urls.glue, 'deckcraft_player.js'),
-      wasmUrl: url(this.urls.wasm, 'deckcraft_player_bg.wasm'),
-      canvas: offscreen,
-      fonts: this.fonts.map(f => url(f)),
-      fontsBase: this.fontsBase && new URL(this.fontsBase, location.href).href,
-      mediaBase: this.mediaBase && new URL(this.mediaBase, location.href).href,
-      mediaCredentials: this.mediaCredentials,
-    }, [offscreen])
+    this.worker.postMessage(this.initMessage(offscreen, location.href), [offscreen])
     this.resizeObserver?.disconnect()
     this.resizeObserver = new ResizeObserver(() => this.resize())
     this.resizeObserver.observe(this.container)
+  }
+
+  // What the worker is started with: the module's files, fonts and the media options, resolved
+  // against `page`, the page's URL.
+  initMessage (canvas, page) {
+    const base = new URL(this.base, page).href
+    const url = (given, name) => new URL(given || name, base).href
+    return {
+      type: 'init',
+      glueUrl: url(this.urls.glue, 'deckcraft_player.js'),
+      wasmUrl: url(this.urls.wasm, 'deckcraft_player_bg.wasm'),
+      canvas,
+      fonts: this.fonts.map(f => url(f)),
+      fontsBase: this.fontsBase && new URL(this.fontsBase, page).href,
+      mediaBase: this.mediaBase && new URL(this.mediaBase, page).href,
+      mediaCredentials: this.mediaCredentials,
+    }
   }
 
   async open (url) {

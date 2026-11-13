@@ -940,19 +940,19 @@ test('a link over several lines is one stop for keyboards and screen readers', (
 
 test('the media prefix and its credentials reach the worker, and `images` is reported', () => {
   const p = bareCanvasPlayer()
-  p.mediaBase = 'https://cdn.example/decks/42/'
-  p.mediaCredentials = 'include'
-  const sent = []
-  p.worker = { postMessage: m => sent.push(m) }
-  // What start() sends the worker, with the options this player was given.
-  const init = {
-    type: 'init',
-    fontsBase: null,
-    mediaBase: p.mediaBase && new URL(p.mediaBase, 'https://room.example/').href,
-    mediaCredentials: p.mediaCredentials,
-  }
-  p.worker.postMessage(init)
-  assert.deepEqual(sent, [{ type: 'init', fontsBase: null, mediaBase: 'https://cdn.example/decks/42/', mediaCredentials: 'include' }])
+  Object.assign(p, { base: '/deckcraft/', urls: {}, fonts: [], fontsBase: null, mediaBase: '/media/decks/42/', mediaCredentials: 'include' })
+  // The message start() posts, built by the same method.
+  const init = p.initMessage('the canvas', 'https://room.example/webinar/1')
+  assert.equal(init.type, 'init')
+  assert.equal(init.canvas, 'the canvas')
+  assert.equal(init.mediaBase, 'https://room.example/media/decks/42/', 'resolved against the page')
+  assert.equal(init.mediaCredentials, 'include')
+  assert.equal(init.wasmUrl, 'https://room.example/deckcraft/deckcraft_player_bg.wasm')
+  p.mediaBase = null
+  p.mediaCredentials = null
+  const none = p.initMessage('the canvas', 'https://room.example/webinar/1')
+  assert.equal(none.mediaBase, null, 'no prefix: nothing will be fetched')
+  assert.equal(none.mediaCredentials, null)
 
   const seen = []
   p.info = null // the pictures are fetched before `ready`: a failed one must not fail the open

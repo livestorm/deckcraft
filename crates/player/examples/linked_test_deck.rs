@@ -1,5 +1,7 @@
 //! Builds a test deck whose pictures are linked (not embedded), and the picture files to host.
 //! cargo run -p deckcraft-player --example linked_test_deck -- <https media base> <out dir>
+//! With EMBED=1 the same pictures are embedded instead, for a pipeline that takes them out of the
+//! deck and links them itself (the `file:` and other-domain links stay links).
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::sync::Arc;
@@ -84,17 +86,31 @@ fn main() {
         Arc::make_mut(s).shapes.clear();
     }
 
-    let u = |name: &str| format!("{base}{name}");
-    let red = linked(&mut p, &u("red.png"));
-    let back = linked(&mut p, &u("background.png"));
-    let lay = linked(&mut p, &u("layout.png"));
-    let logo = linked(&mut p, &u("master-logo.png"));
-    let large = linked(&mut p, &u("large.png"));
-    let missing = linked(&mut p, &u("missing.png"));
-    let notpic = linked(&mut p, &u("not-a-picture.png"));
+    let embed = std::env::var("EMBED").is_ok();
+    let files: Vec<(&str, Vec<u8>)> = vec![
+        ("red.png", png(1600, 900, [220, 50, 50])),
+        ("background.png", png(1920, 1080, [60, 170, 90])),
+        ("layout.png", png(1600, 900, [130, 70, 190])),
+        ("master-logo.png", png(320, 200, [40, 110, 220])),
+        ("large.png", noise(2400, 1600)),
+        ("hidden.png", png(800, 450, [90, 90, 90])),
+        ("not-a-picture.png", b"<html><body>403 Forbidden</body></html>".to_vec()),
+    ];
+    let bytes_of = |name: &str| files.iter().find(|(n, _)| *n == name).map(|(_, b)| b.clone()).unwrap();
+    // Embedded, or linked under the base.
+    let pic = |p: &mut Presentation, name: &str| {
+        if embed { p.add_media(name, "image/png", bytes_of(name)).unwrap() } else { linked(p, &format!("{base}{name}")) }
+    };
+    let red = pic(&mut p, "red.png");
+    let back = pic(&mut p, "background.png");
+    let lay = pic(&mut p, "layout.png");
+    let logo = pic(&mut p, "master-logo.png");
+    let large = pic(&mut p, "large.png");
+    let hidden = pic(&mut p, "hidden.png");
+    let missing = linked(&mut p, &format!("{base}missing.png"));
+    let notpic = linked(&mut p, &format!("{base}not-a-picture.png"));
     let file = linked(&mut p, "file:///C:/Users/presenter/Pictures/photo.png");
     let off = linked(&mut p, "https://example.org/elsewhere/photo.png");
-    let hidden = linked(&mut p, &u("hidden.png"));
 
     let title = |p: &mut Presentation, t: &str| label(p, t, Xfrm::new(40.0, 20.0, 880.0, 60.0));
     let note = |p: &mut Presentation, t: &str| label(p, t, Xfrm::new(40.0, 470.0, 740.0, 60.0));
@@ -134,18 +150,29 @@ fn main() {
     put(&mut p, 4, s);
     // 6: pictures that must not be drawn.
     let w = 200.0;
-    let s = vec![
-        title(&mut p, "6. Pictures that must not load"),
-        picture(&mut p, missing, Xfrm::new(40.0, 120.0, w, 140.0)),
-        label(&mut p, "missing.png (404): image-unavailable", Xfrm::new(40.0, 270.0, w, 60.0)),
-        picture(&mut p, notpic, Xfrm::new(270.0, 120.0, w, 140.0)),
-        label(&mut p, "not-a-picture.png: image-unavailable, undecodable", Xfrm::new(270.0, 270.0, w, 60.0)),
-        picture(&mut p, file, Xfrm::new(500.0, 120.0, w, 140.0)),
-        label(&mut p, "file: link: never requested", Xfrm::new(500.0, 270.0, w, 60.0)),
-        picture(&mut p, off, Xfrm::new(730.0, 120.0, w, 140.0)),
-        label(&mut p, "other domain: never requested", Xfrm::new(730.0, 270.0, w, 60.0)),
-        note(&mut p, "Expect: four grey boxes with a cross; two image-unavailable errors; no request to example.org or a file path."),
-    ];
+    // The links that stay links, after the two failure cases when those are there.
+    let x0 = if embed { 40.0 } else { 500.0 };
+    let mut s = vec![title(&mut p, "6. Pictures that must not load")];
+    if !embed {
+        s.extend([
+            picture(&mut p, missing, Xfrm::new(40.0, 120.0, w, 140.0)),
+            label(&mut p, "missing.png (404): image-unavailable", Xfrm::new(40.0, 270.0, w, 60.0)),
+            picture(&mut p, notpic, Xfrm::new(270.0, 120.0, w, 140.0)),
+            label(&mut p, "not-a-picture.png: image-unavailable, undecodable", Xfrm::new(270.0, 270.0, w, 60.0)),
+        ]);
+    }
+    s.extend([
+        picture(&mut p, file, Xfrm::new(x0, 120.0, w, 140.0)),
+        label(&mut p, "file: link (linked in PowerPoint): never requested", Xfrm::new(x0, 270.0, w, 60.0)),
+        picture(&mut p, off, Xfrm::new(x0 + 230.0, 120.0, w, 140.0)),
+        label(&mut p, "other domain (linked in PowerPoint): never requested", Xfrm::new(x0 + 230.0, 270.0, w, 60.0)),
+    ]);
+    let expect = if embed {
+        "Expect: two grey boxes with a cross; no request to example.org or a file path."
+    } else {
+        "Expect: four grey boxes with a cross; two image-unavailable errors; no request to example.org or a file path."
+    };
+    s.push(note(&mut p, expect));
     put(&mut p, 5, s);
     // 7: hidden: its picture is never fetched.
     let s = vec![title(&mut p, "7. Hidden slide"), picture(&mut p, hidden, Xfrm::new(240.0, 110.0, 480.0, 270.0))];
@@ -164,15 +191,7 @@ fn main() {
 
     let deck = deckcraft_pptx::export(&p).unwrap();
     std::fs::write(out.join("linked-images-test.pptx"), &deck).unwrap();
-    let files: [(&str, Vec<u8>); 6] = [
-        ("red.png", png(1600, 900, [220, 50, 50])),
-        ("background.png", png(1920, 1080, [60, 170, 90])),
-        ("layout.png", png(1600, 900, [130, 70, 190])),
-        ("master-logo.png", png(320, 200, [40, 110, 220])),
-        ("large.png", noise(2400, 1600)),
-        ("not-a-picture.png", b"<html><body>403 Forbidden</body></html>".to_vec()),
-    ];
-    for (name, bytes) in &files {
+    for (name, bytes) in files.iter().filter(|(n, _)| !embed && *n != "hidden.png") {
         std::fs::write(out.join("media").join(name), bytes).unwrap();
     }
     println!("base {base}");

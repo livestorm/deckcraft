@@ -54,6 +54,8 @@ jobs:
   # (tests and doctests) and wasm. Together they run every step of `cargo xtask ci`; a run takes
   # as long as the slowest job, not the sum of all three.
   gate:
+    # Without a name, every matrix value (the env lines too) ends up in the check's name.
+    name: gate (${{ matrix.leg }})
     needs: font-pin
     strategy:
       fail-fast: false
@@ -61,14 +63,27 @@ jobs:
         include:
           - leg: lint
             command: cargo xtask lint
+            env: ""
+          # The test job builds the workspace's own crates at opt-level 0; dependencies keep
+          # opt-level 2 (Cargo.toml's `[profile.dev.package."*"]`) and come from the cache.
+          # rust-cache keeps dependencies only, so every run rebuilds the workspace crates: at
+          # opt-level 1 that took 4m10s of a 6m39s warm run, at 0 about a quarter of it, while
+          # the tests take about twice as long. Unoptimised frames are larger, so tests get an
+          # 8 MiB thread stack, a main thread's size: at 2 MiB, saving and reopening a deck at
+          # MAX_GROUP_DEPTH overflows at opt-level 0 (it does not at 1, nor in any release build).
           - leg: test
             command: cargo xtask test
+            env: |
+              CARGO_PROFILE_DEV_OPT_LEVEL=0
+              RUST_MIN_STACK=8388608
           - leg: wasm
             command: cargo xtask wasm
+            env: ""
     # Tracks @main so suite-wide CI fixes reach every app without a PR in each repository.
     uses: storytold/craft-common-actions/.github/workflows/gate.yml@main
     with:
       command: ${{ matrix.command }}
+      env: ${{ matrix.env }}
       # One dependency cache per job. The shared gate's job is always called `gate`, so without
       # this the three jobs share one cache key: the first to finish saves its build and the
       # others restore a build that isn't theirs.

@@ -246,7 +246,7 @@ function images ({ fail = [], hold = [], bytes = 4 } = {}) {
   const asked = []
   const holds = new Map()
   const fetch = async (url, opts = {}) => {
-    asked.push({ url, credentials: opts.credentials })
+    asked.push({ url, credentials: opts.credentials, redirect: opts.redirect })
     if (hold.includes(url)) {
       await new Promise((resolve, reject) => {
         holds.set(url, resolve)
@@ -349,6 +349,22 @@ test('fetches carry the credentials mode the host asked for, and none by default
   await loadImages(all, { fetchFn: server.fetch, setImage: () => {}, credentials: 'include' })
   await loadImages(all, { fetchFn: server.fetch, setImage: () => {} })
   assert.deepEqual(server.asked.map(a => a.credentials), ['include', undefined])
+})
+
+test('a redirect is never followed, so a fetch cannot leave the media prefix', async () => {
+  const all = [image(1, 'a.png', [0])]
+  const failed = []
+  // As fetch does with redirect: 'error': a redirect response rejects.
+  const fetchFn = async (url, opts) => {
+    assert.equal(opts.redirect, 'error')
+    throw new TypeError('Failed to fetch')
+  }
+  const got = await loadImages(all, { fetchFn, setImage: () => assert.fail('no bytes'), failed: f => failed.push(f) })
+  assert.equal(got.failed, 1)
+  assert.equal(failed[0].url, `${IMG_BASE}a.png`)
+  const server = images()
+  await loadImages(all, { fetchFn: server.fetch, setImage: () => {} })
+  assert.deepEqual(server.asked.map(a => a.redirect), ['error'])
 })
 
 test('bytes that arrive after the deck was replaced are dropped', async () => {

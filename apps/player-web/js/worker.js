@@ -261,7 +261,9 @@ async function loadImages (images, { fetchFn = fetch, setImage, failed = () => {
     const stop = new AbortController()
     const timer = setTimeout(() => stop.abort(), timeoutMs)
     try {
-      const r = await fetchFn(img.url, { signal: stop.signal, ...(credentials ? { credentials } : {}) })
+      // A redirect is never followed: it could leave the media prefix that `mediaUrl` checked, and
+      // with credentials take them to another origin. A media server serves pictures in place.
+      const r = await fetchFn(img.url, { signal: stop.signal, redirect: 'error', ...(credentials ? { credentials } : {}) })
       if (!r.ok) throw new Error(`status ${r.status}`)
       const buf = new Uint8Array(await r.arrayBuffer())
       setImage(img.media, buf)

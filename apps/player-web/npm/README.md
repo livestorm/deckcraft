@@ -97,7 +97,8 @@ player.on('error', e => { if (e.message === 'image-unavailable') console.warn(e.
   with no user name or password, no `..` (encoded or not), no encoded separator, backslash, space
   or control character, and no more than 2048 characters. Everything else is left alone and draws
   nothing, `file:` paths above all: Link to File writes a local path, which is not the viewer's.
-  The rule is applied by the module and again by the worker.
+  The rule is applied by the module and again by the worker, and redirects are never followed:
+  a redirect fails the picture, so a URL under `mediaBase` can't send the browser elsewhere.
 - `mediaCredentials` is the fetch credentials mode for pictures (`'include'`, `'same-origin'`,
   `'omit'`). Unset, a picture is fetched like the deck itself, `fetch(url)`, whose default mode
   sends cookies only to the page's own origin. A cross-origin path serving them must send CORS

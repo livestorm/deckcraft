@@ -47,6 +47,8 @@ those pictures need cookies the deck's own download doesn't carry:
 
 - The room's Content Security Policy must allow `connect-src` to the host serving the pictures:
   the worker fetches them with `fetch`, as it does the deck.
+- The path serving the pictures must answer with the picture itself, not a redirect: redirects
+  are refused, so a URL under `mediaBase` can never lead elsewhere.
 - The path serving the pictures must send CORS headers (`Access-Control-Allow-Origin` for the
   room's origin, plus `Access-Control-Allow-Credentials: true` with `mediaCredentials: 'include'`).
 - Lazy loading (fetching later slides' pictures only when they are near) and shrinking pictures are

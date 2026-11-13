@@ -77,14 +77,17 @@ attribution (`cargo xtask assets`), layering, wasm32 check. CI runs the same ste
 every PR and every push to `main` and `livestorm/main`, as three parallel jobs of the shared gate:
 `cargo xtask lint` (fmt, pdf-deps, clippy, assets, layers), `cargo xtask test` and
 `cargo xtask wasm`, each with its own dependency cache. Pushes to the default branch save the
-caches pull requests restore. macOS is built and tested by the release workflow only. Releases
+caches pull requests restore. The caches hold dependencies only, so the test job builds the
+workspace's own crates at opt-level 0 (dependencies stay at 2) with an 8 MiB test thread stack:
+unoptimised frames are larger, and saving a deck nested to `MAX_GROUP_DEPTH` overflows 2 MiB at
+opt-level 0. macOS is built and tested by the release workflow only. Releases
 (pushes to `release`) build signed macOS, Windows, Linux, FreeBSD and web artifacts.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-13 | trivial | Quality gates: CI runs `cargo xtask ci`'s steps as three parallel jobs (`lint`, `test`, `wasm`) with a cache each; `pdf-deps` and doctests listed |
+| 2026-11-13 | trivial | Quality gates: CI runs `cargo xtask ci`'s steps as three parallel jobs (`lint`, `test`, `wasm`) with a cache each, the test job at opt-level 0 with an 8 MiB stack; `pdf-deps` and doctests listed |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-14 | minor | Community PR wave folded: one L2/L5/L6 row each; command registry 320 (`cmd!` registrations in `cmd/*`), 41 dialogs (titled in `dialogs.rs`), 202k lines, 24 crates (`metafile` added at L0), 1,641 tests. The per-PR rows below give the counts each PR saw on its own branch |
 | 2026-10-14 | minor | Size and Position dialog (`shape.sizePosition`): position, size, rotation, scale and lock aspect in one undo step. 227 commands, 28 dialogs |

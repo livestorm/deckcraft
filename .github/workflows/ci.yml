@@ -4,7 +4,9 @@ name: CI
 # suite's shared gate workflow in craft-common-actions.
 on:
   push:
-    branches: [main]
+    # A push saves the dependency caches pull requests restore, but only on the repository's
+    # default branch (the shared gate's save-if). Pull requests never save one.
+    branches: [main, livestorm/main]
   pull_request:
   workflow_dispatch:
 
@@ -48,11 +50,29 @@ jobs:
             exit 1
           fi
 
+  # `cargo xtask ci` as three parallel jobs: lint (fmt, pdf-deps, clippy, assets, layers), test
+  # (tests and doctests) and wasm. Together they run every step of `cargo xtask ci`; a run takes
+  # as long as the slowest job, not the sum of all three.
   gate:
     needs: font-pin
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - leg: lint
+            command: cargo xtask lint
+          - leg: test
+            command: cargo xtask test
+          - leg: wasm
+            command: cargo xtask wasm
     # Tracks @main so suite-wide CI fixes reach every app without a PR in each repository.
     uses: storytold/craft-common-actions/.github/workflows/gate.yml@main
     with:
+      command: ${{ matrix.command }}
+      # One dependency cache per job. The shared gate's job is always called `gate`, so without
+      # this the three jobs share one cache key: the first to finish saves its build and the
+      # others restore a build that isn't theirs.
+      cache-version: v1-${{ matrix.leg }}
       # Same craft-fonts commit as release.yml.
       craft-fonts-ref: 37827adc41fd165f9a9234ac40f94dbad353aa69
       require-craft-fonts: true

@@ -51,6 +51,8 @@ if ! curl -LsSf https://get.nexte.st/0.9.150/linux | tar zxf - -C "$HOME/.cargo/
 fi
 
 # 4. craft-fonts at the commit CI pins, outside the repository clone (CRAFT_FONTS_DIR points here).
+#    Starts from an empty directory so a rerun doesn't fail on the existing checkout.
+rm -rf /opt/craft-fonts
 mkdir -p /opt/craft-fonts
 git -C /opt/craft-fonts init -q
 git -C /opt/craft-fonts remote add origin https://github.com/storytold/craft-fonts.git

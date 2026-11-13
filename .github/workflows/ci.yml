@@ -54,6 +54,8 @@ jobs:
   # (tests and doctests) and wasm. Together they run every step of `cargo xtask ci`; a run takes
   # as long as the slowest job, not the sum of all three.
   gate:
+    # Without a name, every matrix value (the env lines too) ends up in the check's name.
+    name: gate (${{ matrix.leg }})
     needs: font-pin
     strategy:
       fail-fast: false

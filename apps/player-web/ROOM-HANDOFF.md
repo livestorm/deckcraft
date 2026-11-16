@@ -3,7 +3,7 @@
 What the webinar room has to do to adopt each version of `@livestorm/deckcraft-player`. The API is
 documented in the package's README and at the top of `player.js` and `worker.js`.
 
-## Next version (proposed 0.11.0): linked pictures released as their slides move away
+## 0.11.0: linked pictures released as their slides move away
 
 0.10.0 fetches pictures by window but never lets go of one, and caps a deck at 256 MB of linked
 pictures ever fetched. A deck of 4K photographs (about 5.5 MB each) stops drawing pictures from

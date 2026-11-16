@@ -18,10 +18,15 @@
 //        round is the starting slide's, sent before 'ready' (even when it had none). After that
 //        only the window of the slide on screen is fetched (IMAGE_WINDOW: that slide, the next
 //        two and the previous one, in show order), once after 'ready' and again on every move
-//        that brings pictures not yet fetched or tried; each such round sends its own message when
-//        its fetches end, so a deck sends several and the counts add up. A picture is fetched at
-//        most once, a failed one included. `slides` are the slides whose pictures arrived in that
-//        round
+//        that brings pictures the deck doesn't hold and hasn't failed; each such round sends its
+//        own message when its fetches end, so a deck sends several and the counts add up. Each
+//        move also releases the pictures no slide near it draws (IMAGE_KEEP: the window and one
+//        slide more each side), so the deck holds at most MAX_DECK_IMAGE_BYTES at once, however
+//        many it links; a released picture is fetched again, and counted again, when its window
+//        comes back. A failed picture is never tried again, except one refused for the budget
+//        ('deck-budget'), which is tried again on a later move. A picture whose slides all left
+//        the window before it arrived is dropped, not counted. `slides` are the slides whose
+//        pictures arrived in that round
 //      {type: 'state', slide, step, animating}
 //      {type: 'cues', cues: [{shape, action}]}
 //      {type: 'metrics', frameMs, width, height}
@@ -219,18 +224,24 @@ const MAX_IMAGE_FETCHES = 4
 const IMAGE_TIMEOUT_MS = 20000
 // Longest URL fetched for a picture.
 const MAX_MEDIA_URL = 2048
-// Most bytes read for one picture, and for all of one deck's: the player's own limits
+// Most bytes read for one picture, and held for all of one deck's at once: the player's own limits
 // (MAX_LINKED_IMAGE_BYTES, MAX_LINKED_TOTAL_BYTES), applied while downloading so an oversized
 // response is dropped before it is held in memory.
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024
 const MAX_DECK_IMAGE_BYTES = 256 * 1024 * 1024
 
 // A response's body as bytes, read as it arrives and abandoned once it passes `max` bytes or the
-// deck's remaining `budget` ({left}), whichever is smaller. The budget is spent as bytes arrive.
+// deck's remaining `budget` ({left}), whichever is smaller. The budget is spent as bytes arrive;
+// whoever holds the bytes gives it back when they let go of them (openImages).
 async function readCapped (r, max, budget) {
   const limit = () => Math.min(max, budget.left)
   const declared = Number(r.headers?.get?.('content-length'))
-  if (Number.isFinite(declared) && declared > limit()) throw new Error(declared > max ? 'too-large' : 'deck-budget')
+  if (Number.isFinite(declared) && declared > limit()) {
+    // Cancelled, not left unread: an unread body holds its connection open, and a browser opens
+    // only a few per host, so a handful of refusals would leave every later fetch waiting.
+    Promise.resolve(r.body?.cancel?.()).catch(() => {})
+    throw new Error(declared > max ? 'too-large' : 'deck-budget')
+  }
   const tooBig = n => new Error(n > max ? 'too-large' : 'deck-budget')
   if (!r.body?.getReader) {
     const buf = new Uint8Array(await r.arrayBuffer())
@@ -302,7 +313,7 @@ async function fetchImage (img, { fetchFn = fetch, setImage, failed = () => {}, 
     return buf.byteLength
   } catch (err) {
     const reason = stop.signal.aborted ? 'timeout' : String(err && err.message ? err.message : err)
-    failed({ url: img.url, slide: img.slides?.[0] ?? null, reason })
+    failed({ media: img.media, url: img.url, slide: img.slides?.[0] ?? null, reason })
     return null
   } finally {
     clearTimeout(timer)
@@ -313,6 +324,11 @@ async function fetchImage (img, { fetchFn = fetch, setImage, failed = () => {}, 
 // screen, the `ahead` slides after it and the `behind` slides before it, in the show's order
 // (hidden slides and slides outside a custom show or range are not in it).
 const IMAGE_WINDOW = { ahead: 2, behind: 1 }
+// The pictures the deck keeps: the window's and one slide more each side, so stepping back and
+// forth never fetches a picture again. Everything else is released on every move. With one picture
+// per slide, that is at most 6 pictures held: 6 × 32 MB (the per-picture cap) is under the deck's
+// 256 MB, and 4K photographs (about 5.5 MB as JPEG) hold about 33 MB.
+const IMAGE_KEEP = { ahead: 3, behind: 2 }
 
 // The slides of `slide`'s window, most urgent first: the slide itself, the ones after it, then the
 // ones before it. `order` is the show's slide indexes in show order; a slide not in it (a hidden
@@ -456,47 +472,79 @@ function showImages () {
   pictures(player.position()[0]).catch(err => fail(err))
 }
 
-// Fetch the deck's linked pictures by window. The starting slide's are fetched before this
-// resolves (before the first frame); the returned function `show(slide)` then fetches the window of
-// the slide on screen (`windowSlides`), and is called again whenever the position moves.
+// Fetch the deck's linked pictures by window, and release them as the viewer moves away. The
+// starting slide's are fetched before this resolves (before the first frame); the returned function
+// `show(slide)` then fetches the window of the slide on screen (`windowSlides`), and is called again
+// whenever the position moves.
 //
-// - A picture is fetched at most once per deck: after it loaded, and after it failed (no retry).
+// - The deck holds only what slides near the one on screen draw (`keep`, IMAGE_KEEP): each move
+//   releases every other picture (`clearLinkedImage`). A picture several slides draw stays while
+//   any of them is near. A released picture is fetched again when its window comes back.
+// - One budget of MAX_DECK_IMAGE_BYTES caps the bytes held at once, and those arriving: it is spent
+//   as bytes arrive and given back as pictures are released, dropped or refused.
+// - A picture that failed is never tried again (a fetch error, a timeout, too large, undecodable),
+//   except one refused for the budget, which a later move tries again.
 // - At most `limit` fetches run at once, from one queue for the deck. A move puts the new window's
 //   pictures at the front, the slide on screen's first, and drops the old window's that haven't
-//   started (a later window may still ask for them); fetches already running finish.
+//   started (a later window may still ask for them); fetches already running finish, and their
+//   bytes are dropped if no slide near the one on screen draws them by then.
 // - Each round (the first, then each window that has something to fetch) reports one `images`
-//   message once its fetches have all ended, with the pictures it started. One budget of
-//   MAX_DECK_IMAGE_BYTES holds for all of them.
+//   message once its fetches have all ended, with the pictures it started.
 //
 // Nothing here is fatal: a deck whose pictures can't be fetched still plays. `deck` is the player
 // these pictures belong to; `current()` gives the worker's player, so once another `open` (or a
 // crash) replaced it, nothing more starts, bytes still arriving are dropped instead of reaching the
 // deck now on screen, and nothing more is reported for it. `order` is the show's slide indexes in
 // show order (`info().slides[].index`).
-async function openImages ({ deck, base, credentials, post, current, schedule, order = [], window = IMAGE_WINDOW, fetchFn = fetch, timeoutMs = IMAGE_TIMEOUT_MS, limit = MAX_IMAGE_FETCHES }) {
+async function openImages ({ deck, base, credentials, post, current, schedule, order = [], window = IMAGE_WINDOW, keep = IMAGE_KEEP, fetchFn = fetch, timeoutMs = IMAGE_TIMEOUT_MS, limit = MAX_IMAGE_FETCHES }) {
   const all = deck.linkedImages(base).filter(m => mediaUrl(m.url, base))
+  const byMedia = new Map(all.map(m => [m.media, m]))
   const live = () => current() === deck
+  const held = new Map() // media id → bytes the deck holds for it
+  const failed = new Set() // media ids never tried again
+  const fetching = new Set() // media ids being fetched
+  const budget = { left: MAX_DECK_IMAGE_BYTES }
+  // The slides whose pictures the deck keeps: those near the slide on screen.
+  let near = new Set()
+  const nearTo = slide => { near = new Set([...windowSlides(order, slide, window), ...windowSlides(order, slide, keep)]) }
+  const wanted = media => (byMedia.get(media)?.slides || []).some(s => near.has(s))
   const opts = {
     fetchFn,
     timeoutMs,
     setImage: (media, buf) => {
-      if (!live()) return
+      // Bytes for a deck no longer on screen, or a picture no slide near the one on screen draws
+      // any more, are dropped; that window fetches it again if it comes back.
+      if (!live() || !wanted(media)) {
+        budget.left += buf.byteLength
+        return
+      }
       try {
         if (deck.setLinkedImage(media, buf)) schedule()
       } catch (err) {
+        budget.left += buf.byteLength
         throw new Error(String(err && err.message ? err.message : err))
       }
+      held.set(media, buf.byteLength)
     },
     failed: f => {
+      if (f.reason !== 'deck-budget') failed.add(f.media)
       if (live()) post({ type: 'error', message: 'image-unavailable', url: f.url, slide: f.slide, reason: f.reason, fatal: false })
     },
     credentials,
-    // One budget for every round of the deck.
-    budget: { left: MAX_DECK_IMAGE_BYTES },
+    budget,
   }
-  const started = new Set() // media ids fetched or being fetched: never fetched again
   let queue = [] // [{img, round}] waiting for a slot, most urgent first
   let running = 0
+
+  // Let go of every picture no slide near the one on screen draws.
+  const release = () => {
+    for (const [media, n] of held) {
+      if (wanted(media)) continue
+      deck.clearLinkedImage(media)
+      held.delete(media)
+      budget.left += n
+    }
+  }
 
   const newRound = always => {
     const round = { always, t0: performance.now(), waiting: new Set(), started: 0, loaded: 0, failed: 0, bytes: 0, slides: new Set(), ended: false }
@@ -522,18 +570,19 @@ async function openImages ({ deck, base, credentials, post, current, schedule, o
     if (!live()) unqueue()
     while (running < limit && queue.length) {
       const { img, round } = queue.shift()
-      started.add(img.media)
+      fetching.add(img.media)
       running++
       round.started++
       fetchImage(img, opts).then(n => {
         if (n === null) {
           round.failed++
-        } else {
+        } else if (held.has(img.media)) {
           round.loaded++
           round.bytes += n
           for (const s of img.slides || []) round.slides.add(s)
         }
       }).finally(() => {
+        fetching.delete(img.media)
         running--
         round.waiting.delete(img.media)
         settle(round)
@@ -541,13 +590,16 @@ async function openImages ({ deck, base, credentials, post, current, schedule, o
       })
     }
   }
-  // Fetch the pictures `slides` use that haven't started, in that order, ahead of anything queued.
+  // Fetch the pictures `slides` use that the deck doesn't hold, isn't fetching and that haven't
+  // failed, in that order, ahead of anything queued.
   const want = (slides, always = false) => {
     const round = newRound(always)
     const picks = []
     if (live()) {
       for (const s of slides) {
-        for (const img of all) if (img.slides.includes(s) && !started.has(img.media) && !picks.includes(img)) picks.push(img)
+        for (const img of all) {
+          if (img.slides.includes(s) && !held.has(img.media) && !fetching.has(img.media) && !failed.has(img.media) && !picks.includes(img)) picks.push(img)
+        }
       }
     }
     // The old window's queue goes: what the new window needs is queued again below, first.
@@ -560,11 +612,14 @@ async function openImages ({ deck, base, credentials, post, current, schedule, o
   }
 
   const [start] = deck.position()
+  nearTo(start)
   await want([start], true)
   let at = null
   return slide => {
     if (slide === at) return Promise.resolve()
     at = slide
+    nearTo(slide)
+    if (live()) release()
     return want(windowSlides(order, slide, window))
   }
 }
@@ -610,7 +665,7 @@ function enqueue (task) {
 
 if (typeof module === 'object' && module.exports) {
   // Node, for the tests (worker.test.js).
-  module.exports = { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue, answerLinkAt, fetchImage, openImages, windowSlides, IMAGE_WINDOW, MAX_DECK_IMAGE_BYTES, mediaUrl, readCapped, MAX_IMAGE_BYTES, MAX_IMAGE_FETCHES, IMAGE_TIMEOUT_MS }
+  module.exports = { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue, answerLinkAt, fetchImage, openImages, windowSlides, IMAGE_WINDOW, IMAGE_KEEP, MAX_DECK_IMAGE_BYTES, mediaUrl, readCapped, MAX_IMAGE_BYTES, MAX_IMAGE_FETCHES, IMAGE_TIMEOUT_MS }
 } else {
   // An `open`'s download starts at once, alongside the module's; so does a notes download.
   self.onmessage = ({ data }) => {

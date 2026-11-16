@@ -107,17 +107,26 @@ player.on('error', e => { if (e.message === 'image-unavailable') console.warn(e.
   fetches only what the viewer is about to see: the pictures of the slide on screen, the next two
   slides and the previous one, in the show's order (hidden slides are not counted), fetched again
   on every move. The slide on screen's come first, and pictures still waiting for the old window
-  are dropped when the deck moves elsewhere. Each picture is fetched at most once per deck, a
-  failed one included. The slide on screen is drawn again as its pictures arrive, so after a jump
-  far ahead it shows briefly without them. At most 4 fetches at once, 20 s each, 32 MB per
-  picture, 256 MB and 512 pictures per deck.
+  are dropped when the deck moves elsewhere. The slide on screen is drawn again as its pictures
+  arrive, so after a jump far ahead it shows briefly without them.
+- Pictures are released as the viewer moves away: on every move the player lets go of every
+  picture that no slide in the window, or one slide beyond it each side, draws (a picture several
+  slides share stays while any of them is near). So a deck can link any number of pictures: the
+  256 MB cap is on what is held at once, not on the deck. A released picture is fetched again when
+  its window comes back; stepping back and forth one slide never fetches one again. A picture that
+  failed is not tried again (an error status, a timeout, too large, undecodable); one refused for
+  the 256 MB cap, which takes a window of more than 256 MB, is tried again on a later move. At
+  most 4 fetches at once, 20 s each, 32 MB per picture, 256 MB held at once and 512 pictures per
+  deck.
 - A picture that can't be fetched, or whose bytes aren't a picture this player draws, gives `error`
   with `{message: 'image-unavailable', url, slide, reason, fatal: false}`; the deck plays on and it
   never fails `open()`. Its box draws as an empty picture (a light grey rectangle with a cross), as
   any picture whose bytes can't be read does.
 - `images({loaded, failed, bytes, ms, slides})` reports each round (the opening slide's, then each
-  move that brought pictures not yet fetched; add them up for the deck), and `metrics` carries the same
-  counts as `imagesLoaded`, `imagesFailed`, `imageBytes` and `imageMs`.
+  move that brought pictures the deck doesn't hold; add them up for the deck: a picture fetched
+  again is counted again), and `metrics` carries the same counts as `imagesLoaded`,
+  `imagesFailed`, `imageBytes` and `imageMs`. A picture whose slides all left the window before it
+  arrived is dropped and not counted.
 
 Worker protocol: `mediaBase` and `mediaCredentials` are `init` options; the worker sends
 `{type: 'images', loaded, failed, bytes, ms, slides}` per round and

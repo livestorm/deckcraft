@@ -2,7 +2,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue, answerLinkAt, fetchImage, openImages, windowSlides, IMAGE_WINDOW, MAX_DECK_IMAGE_BYTES, MAX_IMAGE_BYTES, mediaUrl, MAX_IMAGE_FETCHES, readCapped } = require('./worker.js')
+const { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue, answerLinkAt, fetchImage, openImages, windowSlides, IMAGE_WINDOW, IMAGE_KEEP, MAX_DECK_IMAGE_BYTES, MAX_IMAGE_BYTES, mediaUrl, MAX_IMAGE_FETCHES, readCapped } = require('./worker.js')
 
 const BASE = 'https://fonts.example/'
 
@@ -225,17 +225,35 @@ test('only https URLs under the media prefix may be fetched', () => {
 })
 
 // A deck of linked pictures as WebPlayer reports them, with the player calls the worker makes.
+// `holding` is what the deck holds now ({media: bytes}), `cleared` every release in order; like the
+// player, it refuses bytes past MAX_DECK_IMAGE_BYTES held at once.
 function deck (images, { slide = 0, onScreen = () => true, refuse = null } = {}) {
   const set = []
+  const cleared = []
+  const holding = new Map()
+  let most = 0
   return {
     set,
+    cleared,
+    holding,
+    most: () => most,
     moveTo: s => { slide = s },
     position: () => [slide, 0],
     linkedImages: base => (base ? images : []),
     setLinkedImage: (media, bytes) => {
       if (refuse && refuse(media)) throw new Error('undecodable')
+      const total = [...holding.values()].reduce((a, b) => a + b, 0) - (holding.get(media) || 0) + bytes.length
+      if (total > MAX_DECK_IMAGE_BYTES) throw new Error('deck-budget')
       set.push([media, bytes.length])
+      holding.set(media, bytes.length)
+      most = Math.max(most, total)
       return onScreen(media)
+    },
+    clearLinkedImage: media => {
+      const n = holding.get(media) || 0
+      holding.delete(media)
+      cleared.push(media)
+      return n
     },
   }
 }
@@ -344,7 +362,7 @@ test('a hidden slide is not counted in the window', async () => {
   assert.deepEqual(urls(server), ['a.png', 'b.png', 'c.png'], 'the next two slides of the show are 1 and 3')
 })
 
-test('a picture several slides use is fetched once', async () => {
+test('a picture several slides use is fetched once, and stays while any of them is near', async () => {
   const logo = image(1, 'logo.png', [0, 1, 2, 3, 4, 5, 6])
   const all = [logo, image(2, 'b.png', [3]), image(3, 'c.png', [6])]
   const player = deck(all)
@@ -364,12 +382,28 @@ test('a picture several slides use is fetched once', async () => {
     'logo.png b.png c.png',
     'logo.png b.png c.png',
     'logo.png b.png c.png',
-    'logo.png b.png c.png',
-  ], 'each window adds only its new pictures; the logo every slide uses is fetched once')
-  assert.deepEqual(player.set.map(s => s[0]), [1, 2, 3])
+    'logo.png b.png c.png c.png',
+  ], 'each window adds only its new pictures; c.png, released on the jump to 0, comes back with slide 6')
+  assert.ok(!player.cleared.includes(1), 'the logo every slide uses is never released')
+  assert.deepEqual(player.cleared, [2, 3], 'b.png when slide 6 left slide 3 behind, c.png on the jump to 0')
 })
 
-test('a far jump fetches the new slide’s pictures first and drops the old window’s queue', async () => {
+test('a picture two distant slides share is released between them and fetched again for the second', async () => {
+  const all = Array.from({ length: 12 }, (_, i) => image(100 + i, `s${i}.png`, [i]))
+  all.push(image(7, 'shared.png', [2, 9]))
+  const player = deck(all)
+  const server = images()
+  const show = await open(player, server)
+  const held = []
+  for (let s = 0; s < 12; s++) {
+    await show(s)
+    held.push(player.holding.has(7))
+  }
+  assert.deepEqual(held, [true, true, true, true, true, false, false, true, true, true, true, true], 'held while slide 2 or 9 is near; fetched again once slide 9 is in the window')
+  assert.equal(server.asked.filter(a => a.url.endsWith('shared.png')).length, 2)
+})
+
+test('a far jump fetches the new slide’s pictures first, drops the old window’s queue and its late bytes', async () => {
   // Slide 1 has six pictures: four start, two wait for a slot. Slide 20 has two.
   const near = Array.from({ length: 6 }, (_, i) => image(10 + i, `near${i}.png`, [1]))
   const far = [image(30, 'far0.png', [20]), image(31, 'far1.png', [21])]
@@ -385,13 +419,17 @@ test('a far jump fetches the new slide’s pictures first and drops the old wind
   for (const u of held) server.release(u)
   await Promise.all([old, jump])
   assert.deepEqual(urls(server).slice(4), ['far0.png', 'far1.png'], 'the new slide first, then its window; near4 and near5 never start')
-  assert.deepEqual(player.set.map(s => s[0]), [10, 11, 12, 13, 30, 31], 'fetches already running finished')
-  assert.deepEqual(rounds(posted).slice(1).map(r => r.loaded), [4, 2], 'each round counts what it started')
-  await show(1)
-  assert.deepEqual(urls(server).slice(6), ['near4.png', 'near5.png'], 'dropped, not lost: coming back fetches them')
+  assert.deepEqual(player.set.map(s => s[0]), [30, 31], 'fetches already running finished, and their bytes were dropped: slide 1 is far now')
+  assert.deepEqual(rounds(posted).slice(1).map(r => [r.loaded, r.failed]), [[0, 0], [2, 0]], 'dropped bytes are not counted')
+  const back = show(1)
+  await flush()
+  for (const u of held) server.release(u)
+  await back
+  assert.deepEqual(urls(server).slice(6), ['near0.png', 'near1.png', 'near2.png', 'near3.png', 'near4.png', 'near5.png'], 'coming back fetches them all')
+  assert.deepEqual([...player.holding.keys()].sort(), [10, 11, 12, 13, 14, 15], 'and the far ones were released')
 })
 
-test('a failed picture is not fetched again on later moves', async () => {
+test('a failed picture is tried once, even when its window comes back', async () => {
   const all = [image(1, 'a.png', [0]), image(2, 'bad.png', [4, 5])]
   const player = deck(all)
   const server = images({ fail: [`${IMG_BASE}bad.png`] })
@@ -399,29 +437,78 @@ test('a failed picture is not fetched again on later moves', async () => {
   const show = await open(player, server, { posted })
   await show(0)
   assert.deepEqual(urls(server), ['a.png'], 'slide 4 is outside the first window')
-  for (const s of [2, 3, 4, 5, 4, 0, 4, 5]) await show(s)
-  assert.deepEqual(urls(server), ['a.png', 'bad.png'], 'tried once, when its window came, never again')
+  for (const s of [2, 3, 4, 5, 4, 0, 4, 5, 20, 5]) await show(s)
+  assert.deepEqual(urls(server).filter(u => u === 'bad.png'), ['bad.png'], 'tried once, when its window came, never again')
+  assert.deepEqual(urls(server).filter(u => u === 'a.png').length, 2, 'a.png, released, was fetched again on the move back to 0')
   assert.deepEqual(posted.filter(m => m.type === 'error').map(m => [m.message, m.url.slice(IMG_BASE.length), m.reason, m.fatal]), [['image-unavailable', 'bad.png', 'status 404', false]])
 })
 
-test('one deck budget holds across every window', async () => {
-  // 30 MiB each, under the per-picture cap: eight fit in the deck's 256 MiB, the ninth would not.
-  const size = 30 * 1024 * 1024
-  const all = Array.from({ length: 12 }, (_, i) => image(i, `s${i}.png`, [i]))
+test('moving through a deck linking far more than the budget never hits it, back or forth', async () => {
+  // 60 slides of one 8 MiB picture each: 480 MiB, nearly twice the deck’s 256 MiB.
+  const size = 8 * 1024 * 1024
+  const n = 60
+  const all = Array.from({ length: n }, (_, i) => image(i, `s${i}.png`, [i]))
   const player = deck(all)
   const server = images({ bytes: size })
   const posted = []
-  const show = await open(player, server, { posted })
-  const asked = []
-  for (let s = 0; s < 12; s++) {
+  const order = [...Array(n).keys()]
+  const show = await open(player, server, { posted, order })
+  const path = [...order, ...order.slice().reverse()]
+  for (const s of path) {
     await show(s)
-    asked.push(server.asked.length)
+    for (const w of windowSlides(order, s)) assert.ok(player.holding.has(w), `slide ${s}: slide ${w}’s picture is in`)
   }
-  assert.ok(8 * size <= MAX_DECK_IMAGE_BYTES && 9 * size > MAX_DECK_IMAGE_BYTES)
-  assert.deepEqual(asked, [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 12, 12], 'one more slide’s picture per move')
-  assert.deepEqual(player.set.map(s => s[0]), [0, 1, 2, 3, 4, 5, 6, 7], 'spread over several windows, still one budget')
-  assert.deepEqual(posted.filter(m => m.type === 'error').map(m => m.reason), ['deck-budget', 'deck-budget', 'deck-budget', 'deck-budget'])
-  assert.equal(rounds(posted).reduce((n, r) => n + r.bytes, 0), 8 * size)
+  assert.ok(n * size > 1.8 * MAX_DECK_IMAGE_BYTES)
+  assert.deepEqual(posted.filter(m => m.type === 'error'), [], 'no deck-budget, nothing else')
+  assert.deepEqual(new Set(player.set.map(s => s[0])).size, n, 'every picture was drawn')
+  assert.ok(player.most() <= 6 * size, `at most six slides’ pictures held at once: ${player.most() / size}`)
+  assert.equal(rounds(posted).reduce((k, r) => k + r.bytes, 0), server.asked.length * size, 'every fetch is counted, re-fetches included')
+})
+
+test('pictures outside the slides near the one on screen are released', async () => {
+  const all = Array.from({ length: 20 }, (_, i) => image(i, `s${i}.png`, [i]))
+  const player = deck(all)
+  const server = images()
+  const show = await open(player, server)
+  for (let s = 0; s <= 10; s++) await show(s)
+  assert.deepEqual(IMAGE_KEEP, { ahead: 3, behind: 2 })
+  assert.deepEqual([...player.holding.keys()].sort((a, b) => a - b), [8, 9, 10, 11, 12], 'the window (9 to 12) and slide 8 behind it; 13 was never fetched')
+  assert.deepEqual(player.cleared, [0, 1, 2, 3, 4, 5, 6, 7], 'each released as it fell two slides behind')
+  await show(9)
+  await show(10)
+  await show(9)
+  assert.equal(server.asked.length, 13, 'stepping back and forth fetches nothing again')
+  await show(15)
+  assert.deepEqual([...player.holding.keys()].sort((a, b) => a - b), [14, 15, 16, 17], 'a far jump keeps only the new window')
+})
+
+test('a picture that comes back into the window is fetched and drawn again', async () => {
+  const all = Array.from({ length: 12 }, (_, i) => image(i, `s${i}.png`, [i]))
+  const player = deck(all)
+  const server = images()
+  const show = await open(player, server)
+  await show(0)
+  await show(10)
+  assert.ok(!player.holding.has(0))
+  await show(0)
+  assert.deepEqual(urls(server).filter(u => u === 's0.png').length, 2)
+  assert.deepEqual(player.set.filter(s => s[0] === 0).length, 2, 'handed to the deck again')
+  assert.ok(player.holding.has(0) && player.holding.has(1) && player.holding.has(2))
+})
+
+test('a picture refused for the budget is tried again on a later move', async () => {
+  // Nine 30 MiB pictures on one slide: eight fit the deck’s 256 MiB, the ninth doesn’t.
+  const size = 30 * 1024 * 1024
+  const all = Array.from({ length: 9 }, (_, i) => image(i, `p${i}.png`, [0]))
+  all.push(image(9, 'other.png', [10]))
+  const player = deck(all)
+  const server = images({ bytes: size })
+  const posted = []
+  const show = await open(player, server, { posted, limit: 1 })
+  assert.deepEqual(posted.filter(m => m.type === 'error').map(m => [m.url.slice(IMG_BASE.length), m.reason]), [['p8.png', 'deck-budget']])
+  await show(10)
+  await show(0)
+  assert.equal(urls(server).filter(u => u === 'p8.png').length, 2, 'tried again once the budget was released')
 })
 
 test('a failed fetch, a refused picture and a timeout are reported and leave the others', async () => {
@@ -495,6 +582,7 @@ function streamed (chunks, size, length = null) {
     ok: true,
     headers: { get: k => (k === 'content-length' && length !== null ? String(length) : null) },
     body: {
+      cancel: async () => { state.cancelled = true },
       getReader: () => ({
         read: async () => (i++ < chunks ? (state.read++, { done: false, value: new Uint8Array(size) }) : { done: true }),
         cancel: async () => { state.cancelled = true },
@@ -511,7 +599,13 @@ test('a body is read under the per-picture cap and dropped as soon as it passes 
   await assert.rejects(readCapped(big, 25, { left: 100 }), /too-large/)
   assert.equal(big.state.read, 3, 'stopped at the chunk that passed the cap, not at the end')
   assert.ok(big.state.cancelled)
-  await assert.rejects(readCapped(streamed(1, 10, 9999), 25, { left: 100 }), /too-large/, 'a declared length over the cap is refused unread')
+  const declared = streamed(1, 10, 9999)
+  await assert.rejects(readCapped(declared, 25, { left: 100 }), /too-large/, 'a declared length over the cap is refused unread')
+  assert.equal(declared.state.read, 0)
+  assert.ok(declared.state.cancelled, 'and its body cancelled, so its connection is free for the next fetch')
+  const overBudget = streamed(1, 10, 50)
+  await assert.rejects(readCapped(overBudget, 100, { left: 40 }), /deck-budget/)
+  assert.ok(overBudget.state.cancelled)
 })
 
 test('the deck’s total budget is spent as bytes arrive and refuses the picture that would pass it', async () => {

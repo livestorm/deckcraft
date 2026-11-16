@@ -21,7 +21,9 @@
 // fonts({loaded: [{family, from}], missing: [family]}) with fontsBase,
 // images({loaded, failed, bytes, ms, slides}) per round of linked-picture fetches with mediaBase
 // (the starting slide's before ready, then the window of each slide shown: that slide, the next two
-// and the previous one, only pictures not yet fetched or tried). A picture that can't be fetched or drawn gives
+// and the previous one, only pictures the deck doesn't hold and that haven't failed). Pictures of
+// slides further away are released, so a released one is fetched again when its window comes back,
+// and counted again. A picture that can't be fetched or drawn gives
 // error({message: 'image-unavailable', url, slide, reason, fatal: false}); the deck plays on, and
 // its box draws as an empty picture, as any picture whose bytes can't be read does,
 // mediaAction({shape, action, at, time}) when someone with controls plays, pauses or seeks a clip

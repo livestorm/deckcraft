@@ -365,3 +365,19 @@ fn releasing_a_picture_frees_the_renderers_decode_of_it() {
     // Every cached decode holds a clone of the bytes: only ours is left, so none of them is.
     assert_eq!(Arc::strong_count(&bytes), 1, "the renderer's cache let go of the bytes and their decodes");
 }
+
+#[test]
+fn replacing_a_picture_frees_the_renderers_decode_of_the_bytes_replaced() {
+    let (deck, url) = covered();
+    let mut p = open(&deck);
+    let media = id_of(&p, &url);
+    p.set_linked_image(media, png([10, 120, 220, 255])).expect("set");
+    p.frame(0.0).frame.expect("drawn: the renderer decoded and cached it");
+    let first = data_of(&p, media);
+    p.set_linked_image(media, png([230, 20, 20, 255])).expect("replaced");
+    assert_eq!(Arc::strong_count(&first), 1, "the replaced bytes' decodes went with them");
+    p.frame(0.1).frame.expect("drawn with the new bytes");
+    let second = data_of(&p, media);
+    p.clear_linked_image(media).expect("released");
+    assert_eq!(Arc::strong_count(&second), 1);
+}

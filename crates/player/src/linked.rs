@@ -136,8 +136,10 @@ impl Player {
             return Err(LinkedImageError::Undecodable);
         }
         // New bytes are a new allocation: the renderer's caches, keyed by the bytes' address,
-        // never mistake them for the empty bytes that failed to draw before.
-        item.data = Arc::new(bytes);
+        // never mistake them for the empty bytes that failed to draw before. The bytes replaced go
+        // with every decode cached for them, which would otherwise hold them until evicted.
+        let old = std::mem::replace(&mut item.data, Arc::new(bytes));
+        deckcraft_render::forget_image(&old);
         self.linked.bytes = total;
         let on_screen = match self.linked.images.get_mut(k) {
             Some(img) => {

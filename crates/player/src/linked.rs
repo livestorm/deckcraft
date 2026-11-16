@@ -4,8 +4,10 @@
 //! The deck names a URL; the player never fetches anything. It lists the linked pictures each
 //! slide of the show uses ([`Player::linked_images`], [`Player::slide_linked_images`]), offers
 //! only those under the host's media prefix for fetching ([`Player::linked_images_under`],
-//! [`media_url`]), and takes the bytes the host fetched ([`Player::set_linked_image`]). A picture
-//! without bytes draws nothing, as an unreadable embedded picture does.
+//! [`media_url`]), takes the bytes the host fetched ([`Player::set_linked_image`]) and lets it
+//! release them again ([`Player::clear_linked_image`]), so a host can hold the pictures of the
+//! slides near the one on screen rather than the whole deck's. A picture without bytes draws
+//! nothing, as an unreadable embedded picture does.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -61,8 +63,8 @@ pub enum LinkedImageError {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Linked {
     images: Vec<LinkedImage>,
-    /// Encoded bytes set so far.
-    bytes: usize,
+    /// Encoded bytes held now: set, less what was released.
+    pub(crate) bytes: usize,
 }
 
 impl Linked {
@@ -148,6 +150,31 @@ impl Player {
             self.shown = None;
         }
         Ok(on_screen)
+    }
+
+    /// Release a linked picture's bytes, so a host that fetches pictures as their slides come
+    /// near can hold a window of them instead of the whole deck's: the bytes are dropped, with
+    /// every decode the renderer cached for them, and no longer count against
+    /// [`MAX_LINKED_TOTAL_BYTES`]. The picture draws as before its bytes were set, and can be set
+    /// again. Returns the encoded bytes released (0 when none were set). If the slide on screen
+    /// draws it, its next [`Player::frame`] draws it without them.
+    pub fn clear_linked_image(&mut self, media: MediaId) -> Result<usize, LinkedImageError> {
+        let Some(img) = self.linked.images.iter_mut().find(|m| m.media == media) else { return Err(LinkedImageError::Unknown) };
+        let Some(item) = self.pres.media.iter_mut().find(|m| m.id == media) else { return Err(LinkedImageError::Unknown) };
+        if !img.loaded {
+            return Ok(0);
+        }
+        let old = std::mem::replace(&mut item.data, Arc::new(Vec::new()));
+        // The renderer's caches hold their own clone of the bytes, keyed by its address: without
+        // this, the bytes and their decoded pictures would stay until the caches' budgets evict them.
+        deckcraft_render::forget_image(&old);
+        let released = old.len();
+        self.linked.bytes = self.linked.bytes.saturating_sub(released);
+        img.loaded = false;
+        if img.slides.contains(&self.pos.slide) {
+            self.shown = None;
+        }
+        Ok(released)
     }
 }
 

@@ -21,7 +21,7 @@ const BAD_MAX: usize = 256;
 const BAD_BUDGET: usize = 64 << 20;
 
 struct Entry {
-    _bytes: Arc<Vec<u8>>,
+    src: Arc<Vec<u8>>,
     pm: Arc<Pixmap>,
     stamp: u64,
 }
@@ -382,7 +382,7 @@ pub fn decode_for(bytes: &Arc<Vec<u8>>, want: f64, adj: &PictureAdjust) -> Optio
         c.clock += 1;
         let n = w as usize * h as usize * 4;
         c.bytes += n;
-        c.map.insert(key, Entry { _bytes: bytes.clone(), pm: pm.clone(), stamp: c.clock });
+        c.map.insert(key, Entry { src: bytes.clone(), pm: pm.clone(), stamp: c.clock });
         while c.bytes > BUDGET && c.map.len() > 1 {
             let Some(oldest) = c.map.iter().min_by_key(|(_, e)| e.stamp).map(|(k, _)| *k) else { break };
             if let Some(e) = c.map.remove(&oldest) {
@@ -391,6 +391,31 @@ pub fn decode_for(bytes: &Arc<Vec<u8>>, want: f64, adj: &PictureAdjust) -> Optio
         }
     });
     Some(pm)
+}
+
+/// Drop everything cached for `bytes`: its decoded pictures at every size and adjustment, its
+/// decoded animation, and its failed mark. Each entry holds a clone of the bytes, so until this
+/// runs a picture whose owner let go of its bytes (a linked picture released by the player) stays
+/// in memory, encoded and decoded, until the cache's own budgets evict it.
+pub fn forget(bytes: &Arc<Vec<u8>>) {
+    let addr = Arc::as_ptr(bytes) as usize;
+    with(|c| {
+        let mut freed = 0;
+        c.map.retain(|k, e| {
+            let keep = k.0 != addr || !Arc::ptr_eq(&e.src, bytes);
+            if !keep {
+                freed += e.pm.width() as usize * e.pm.height() as usize * 4;
+            }
+            keep
+        });
+        c.bytes = c.bytes.saturating_sub(freed);
+        c.anims.retain(|k, e| k.0 != addr || !Arc::ptr_eq(&e.0, bytes));
+        if c.bad.get(&addr).is_some_and(|b| Arc::ptr_eq(b, bytes)) {
+            c.bad.remove(&addr);
+            c.bad_order.retain(|a| *a != addr);
+            c.bad_bytes = c.bad_bytes.saturating_sub(bytes.len());
+        }
+    });
 }
 
 /// Straight RGBA to a premultiplied pixmap.
@@ -651,6 +676,29 @@ mod tests {
         let huge = Arc::new(vec![0u8; BAD_BUDGET + 1]);
         c.mark_bad(Arc::as_ptr(&huge) as usize, &huge);
         assert_eq!(Arc::strong_count(&huge), 1);
+    }
+
+    #[test]
+    fn forgetting_bytes_drops_every_decode_of_them_and_nothing_else() {
+        let adj = PictureAdjust::default();
+        let gone = Arc::new(grey_png(40, 20));
+        let kept = Arc::new(grey_png(30, 30));
+        decode_for(&gone, 64.0, &adj).expect("decodes");
+        decode_for(&gone, 1000.0, &adj).expect("another size");
+        decode_for(&kept, 64.0, &adj).expect("decodes");
+        let animated = gif(201);
+        assert!(anim(&animated, &adj).is_some());
+        let bad = Arc::new(b"not a picture".to_vec());
+        assert!(decode_for(&bad, 64.0, &adj).is_none());
+        assert_eq!(Arc::strong_count(&gone), 3, "two sizes cached");
+        for b in [&gone, &animated, &bad] {
+            forget(b);
+            assert_eq!(Arc::strong_count(b), 1, "nothing holds the bytes any more");
+        }
+        assert_eq!(Arc::strong_count(&kept), 2, "another picture's decode stays");
+        let held = with(|c| c.map.values().filter(|e| Arc::ptr_eq(&e.src, &gone)).count());
+        assert_eq!(held, 0);
+        assert!(decode_for(&gone, 64.0, &adj).is_some(), "and it decodes again when asked");
     }
 
     #[test]

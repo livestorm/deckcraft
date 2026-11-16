@@ -236,6 +236,15 @@ impl WebPlayer {
         self.inner.set_linked_image(MediaId(media), bytes).map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Release a linked picture's bytes (and the decodes cached for them), so they no longer count
+    /// against the deck's budget; it draws as before they were set, and can be set again. Returns
+    /// the bytes released (0 when none were set); throws `unknown` for anything but a linked
+    /// picture of the show.
+    #[wasm_bindgen(js_name = clearLinkedImage)]
+    pub fn clear_linked_image(&mut self, media: u32) -> Result<f64, JsError> {
+        self.inner.clear_linked_image(MediaId(media)).map(|n| n as f64).map_err(|e| JsError::new(&e.to_string()))
+    }
+
     /// The links a viewer can click at the current position, back to front: `[{target, shape,
     /// text, rect: [x, y, w, h], quad: [[x, y] × 4], tooltip, label}]`, in fractions of the slide.
     /// `target` is `{type: 'url', url}` (http, https, mailto or tel only), `{type: 'slide', index,

@@ -11,8 +11,9 @@
 //!   effects (Play, Pause, Stop) the show reached, for the host page to carry out.
 //! - [`Player::links`] and [`Player::link_at`]: the hyperlinks a viewer can click at the current
 //!   position, and the one under a point, with typed targets ([`LinkTarget`]).
-//! - [`Player::linked_images`] and [`Player::set_linked_image`]: pictures whose bytes live outside
-//!   the deck, for the host to fetch (only under its own media prefix, [`media_url`]) and hand in.
+//! - [`Player::linked_images`], [`Player::set_linked_image`] and [`Player::clear_linked_image`]:
+//!   pictures whose bytes live outside the deck, for the host to fetch (only under its own media
+//!   prefix, [`media_url`]), hand in and release.
 //!
 //! Embedded audio and video are not played here: [`Player::media`] hands their bytes and boxes to
 //! the host, whose own players have sound.

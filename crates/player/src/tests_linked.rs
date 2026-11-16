@@ -277,3 +277,91 @@ fn ids_round_trip_through_the_listing() {
         assert_eq!(url_of(&p, m.media), m.url);
     }
 }
+
+/// The bytes the presentation holds for `media`.
+fn data_of(p: &Player, media: MediaId) -> Arc<Vec<u8>> {
+    p.pres.media.iter().find(|m| m.id == media).map(|m| m.data.clone()).expect("media")
+}
+
+#[test]
+fn releasing_a_picture_frees_its_budget_and_it_draws_as_before_its_bytes() {
+    let (deck, url) = covered();
+    let mut p = open(&deck);
+    let empty = p.frame(0.0).frame.expect("first");
+    let media = id_of(&p, &url);
+    let blue = png([10, 120, 220, 255]);
+    let n = blue.len();
+    assert_eq!(p.set_linked_image(media, blue), Ok(true));
+    assert_eq!(p.linked.bytes, n);
+    p.frame(0.1).frame.expect("drawn with it");
+
+    assert_eq!(p.clear_linked_image(media), Ok(n), "the bytes released");
+    assert_eq!(p.linked.bytes, 0, "the budget is freed");
+    assert!(p.linked_images().iter().all(|m| !m.loaded), "loaded goes false");
+    assert!(data_of(&p, media).is_empty());
+    let after = p.frame(0.2).frame.expect("the slide on screen draws it, so it is drawn again");
+    assert_eq!(after.rgba, empty.rgba, "as before its bytes were set");
+    assert_eq!(p.clear_linked_image(media), Ok(0), "releasing again releases nothing");
+    assert_eq!(p.clear_linked_image(MediaId(u32::MAX)), Err(LinkedImageError::Unknown));
+
+    // Set again, it draws again.
+    assert_eq!(p.set_linked_image(media, png([230, 20, 20, 255])), Ok(true));
+    let c = middle(&p.frame(0.3).frame.expect("redrawn"));
+    assert!(c[0] > 200 && c[2] < 40, "{c:?}");
+    assert!(p.linked_images().iter().all(|m| m.loaded));
+}
+
+#[test]
+fn the_deck_budget_caps_bytes_held_at_once_not_bytes_ever_set() {
+    let mut deck = deckcraft_model::defaults::new_presentation(None);
+    let layout = deck.slides[0].layout;
+    let mut urls = Vec::new();
+    for k in 0..12 {
+        if k > 0 {
+            let s = deckcraft_model::defaults::new_slide(&mut deck, layout).expect("slide");
+            deck.slides.push(Arc::new(s));
+        }
+        let url = format!("{BASE}s{k}.png");
+        let media = linked(&mut deck, &url);
+        let pic = picture(&mut deck, media, small());
+        Arc::make_mut(&mut deck.slides[k]).shapes.push(pic);
+        urls.push(url);
+    }
+    let mut p = open(&deck);
+    // A valid PNG padded to a large size: the header decides whether it decodes.
+    let big = |n: usize| {
+        let mut b = png([1, 2, 3, 255]);
+        b.resize(n, 0);
+        b
+    };
+    let size = 30 << 20;
+    assert!(8 * size <= MAX_LINKED_TOTAL_BYTES && 9 * size > MAX_LINKED_TOTAL_BYTES);
+    let ids: Vec<MediaId> = urls.iter().map(|u| id_of(&p, u)).collect();
+    for &id in &ids[..8] {
+        assert!(p.set_linked_image(id, big(size)).is_ok());
+    }
+    assert_eq!(p.set_linked_image(ids[8], big(size)), Err(LinkedImageError::DeckBudget), "eight held at once fill it");
+    // Moving along, a host releases what it no longer shows: every picture of the deck fits in turn.
+    for k in 8..12 {
+        assert_eq!(p.clear_linked_image(ids[k - 8]), Ok(size));
+        assert!(p.set_linked_image(ids[k], big(size)).is_ok(), "slide {k}");
+        assert_eq!(p.linked.bytes, 8 * size);
+    }
+}
+
+#[test]
+fn releasing_a_picture_frees_the_renderers_decode_of_it() {
+    let (deck, url) = covered();
+    let mut p = open(&deck);
+    let media = id_of(&p, &url);
+    p.set_linked_image(media, png([10, 120, 220, 255])).expect("set");
+    p.frame(0.0).frame.expect("drawn: the renderer decoded and cached it");
+    p.resize(400);
+    p.frame(0.1).frame.expect("drawn at another size, cached again");
+    let bytes = data_of(&p, media);
+    // Ours, the presentation's, and one per cached decode.
+    assert!(Arc::strong_count(&bytes) >= 3, "{} holders", Arc::strong_count(&bytes));
+    p.clear_linked_image(media).expect("released");
+    // Every cached decode holds a clone of the bytes: only ours is left, so none of them is.
+    assert_eq!(Arc::strong_count(&bytes), 1, "the renderer's cache let go of the bytes and their decodes");
+}

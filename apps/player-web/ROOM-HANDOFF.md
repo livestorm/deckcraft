@@ -3,7 +3,37 @@
 What the webinar room has to do to adopt each version of `@livestorm/deckcraft-player`. The API is
 documented in the package's README and at the top of `player.js` and `worker.js`.
 
-## Next version (proposed 0.10.0): linked pictures fetched as their slides come near
+## Next version (proposed 0.11.0): linked pictures released as their slides move away
+
+0.10.0 fetches pictures by window but never lets go of one, and caps a deck at 256 MB of linked
+pictures ever fetched. A deck of 4K photographs (about 5.5 MB each) stops drawing pictures from
+about slide 46 (`deck-budget` errors, empty boxes). Now the player holds only the pictures of the
+slides near the one on screen, so a deck can link any number of them.
+
+**Nothing to change in the room** beyond the version. Options, events and messages are the same.
+Morpheus can then drop its per-deck cap on linked pictures (`maxLinkedPicturesSize`), keeping the
+32 MB per-picture limit; release that together with this bump.
+
+**What the room sees:**
+
+- On every move the player releases the pictures no slide near the one on screen draws: near is
+  the window (that slide, the next two and the previous one) and one slide more each side. A
+  picture several slides share stays while any of them is near. The 256 MB cap is now on what is
+  held at once: with one 4K photograph per slide that is about 33 MB (six slides).
+- A released picture is fetched again when its window comes back, so moving back over slides seen
+  earlier fetches their pictures again (the CDN serves them; nothing is cached by the player).
+  Stepping back and forth one slide never fetches one again. `images` counts each fetch, so its
+  `loaded` and `bytes` can add up to more than the deck links.
+- A failed picture is still not tried again, except one refused for the 256 MB cap
+  (`deck-budget`), which now only a window of more than 256 MB of pictures reaches; it is tried
+  again on a later move.
+- A picture whose slides all left the window while it was downloading (a fast skip ahead) is
+  dropped when it arrives and not counted in `images`.
+- A picture refused for its size from its `Content-Length` no longer leaves its connection open.
+  In 0.10.0 each such refusal held one of the browser's few connections to the CDN, so after a
+  handful every later picture timed out.
+
+## 0.10.0: linked pictures fetched as their slides come near
 
 0.9.0 fetches every linked picture of a deck right after the first frame, whichever slides a viewer
 sees. Now each viewer fetches only what they are about to see.

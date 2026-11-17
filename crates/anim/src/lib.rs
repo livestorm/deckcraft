@@ -62,12 +62,39 @@ pub struct AnimState {
     pub clip: Option<[f64; 4]>,
     /// Fill colour override.
     pub tint: Option<Rgba>,
-    /// Outline colour override.
+    /// Outline colour change (Line Color).
     #[serde(default)]
-    pub line_tint: Option<Rgba>,
-    /// Text colour override.
+    pub line_tint: Option<ColorShift>,
+    /// Text colour change (Font Color).
     #[serde(default)]
-    pub text_tint: Option<Rgba>,
+    pub text_tint: Option<ColorShift>,
+}
+
+/// A colour moving to `to`, `t` of the way (0..1) from `from`, or from the colour the renderer
+/// would draw when `from` is none. The renderer knows a run's or an outline's resolved colour
+/// (its own, its paragraph's, its style's, its placeholder's); the timeline does not, so it leaves
+/// the start open unless an earlier colour change fixed it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ColorShift {
+    pub from: Option<Rgba>,
+    pub to: Rgba,
+    pub t: f64,
+}
+
+impl ColorShift {
+    /// The colour to draw in place of `drawn`, with `drawn`'s own transparency.
+    pub fn apply(&self, drawn: Rgba) -> Rgba {
+        self.from.unwrap_or(drawn).lerp(self.to, self.t).with_alpha(drawn.a)
+    }
+
+    /// Where the colour stands, when that does not depend on the drawn colour.
+    pub fn known(&self) -> Option<Rgba> {
+        if self.t >= 1.0 { Some(self.to) } else { self.from.map(|f| f.lerp(self.to, self.t)) }
+    }
+
+    fn sanitized(self) -> ColorShift {
+        ColorShift { t: if self.t.is_finite() { self.t.clamp(0.0, 1.0) } else { 1.0 }, ..self }
+    }
 }
 
 impl Default for AnimState {
@@ -135,6 +162,8 @@ impl AnimState {
             let b = f(c[3], 1.0).clamp(0.0, 1.0);
             [l, t, r.max(l), b.max(t)]
         });
+        self.line_tint = self.line_tint.map(ColorShift::sanitized);
+        self.text_tint = self.text_tint.map(ColorShift::sanitized);
         self
     }
 }

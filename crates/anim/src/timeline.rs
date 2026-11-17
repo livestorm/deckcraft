@@ -98,8 +98,8 @@ pub struct Timeline {
     effects: Vec<Effect>,
     main: Vec<StepInfo>,
     triggers: Vec<(ShapeId, Vec<StepInfo>)>,
-    /// Base fill, outline and text colours per shape (for colour emphasis).
-    colors: Vec<(ShapeId, Colors)>,
+    /// Base fill colour per shape (for colour emphasis).
+    colors: Vec<(ShapeId, Rgba)>,
     /// By-paragraph builds animate first-level paragraphs; deeper paragraphs follow their parent:
     /// (shape, member paragraph, owner paragraph).
     groups: Vec<(ShapeId, usize, usize)>,
@@ -118,12 +118,12 @@ struct TimelineIndex {
     owner: HashMap<(ShapeId, usize), usize>,
     /// Groups (member, owner) by shape, in order.
     groups_by_shape: HashMap<ShapeId, Vec<(usize, usize)>>,
-    /// Base colours by shape (the first recorded wins).
-    color: HashMap<ShapeId, Colors>,
+    /// Base colour by shape (the first recorded wins).
+    color: HashMap<ShapeId, Rgba>,
 }
 
 impl TimelineIndex {
-    fn build(effects: &[Effect], groups: &[(ShapeId, usize, usize)], colors: &[(ShapeId, Colors)]) -> TimelineIndex {
+    fn build(effects: &[Effect], groups: &[(ShapeId, usize, usize)], colors: &[(ShapeId, Rgba)]) -> TimelineIndex {
         let mut ix = TimelineIndex::default();
         for (i, e) in effects.iter().enumerate() {
             ix.by_target.entry((e.timing.shape, e.timing.paragraph)).or_default().push(i);
@@ -198,7 +198,6 @@ impl Timeline {
             }
         };
         let accent = scheme.map(|s| s.get(SchemeSlot::Accent1)).unwrap_or(Rgba::rgb(0x15, 0x60, 0x82));
-        let dark = scheme.map(|s| s.get(SchemeSlot::Dk1)).unwrap_or(Rgba::rgb(0, 0, 0));
 
         let mut tl = Timeline::default();
         if slide.animations.is_empty() {
@@ -354,19 +353,13 @@ impl Timeline {
             if !colored.insert(id) {
                 continue;
             }
-            let shape = shapes.get(&id).copied();
-            let solid = |f: Option<&Fill>| match f {
-                Some(Fill::Solid { color }) => Some(resolve(color)),
-                _ => None,
+            // Outline and text colours are left to the renderer, which resolves them
+            // (`ColorShift`).
+            let c = match shapes.get(&id).copied().and_then(|s| s.fill.as_ref()) {
+                Some(Fill::Solid { color }) => resolve(color),
+                _ => accent,
             };
-            let fill = solid(shape.and_then(|s| s.fill.as_ref())).unwrap_or(accent);
-            let line = solid(shape.and_then(|s| s.line.as_ref()).and_then(|l| l.fill.as_ref())).unwrap_or(fill);
-            // The first run with a colour of its own; text without one is the theme's dark text.
-            let text = shape
-                .and_then(|s| s.text.as_ref())
-                .and_then(|t| t.paragraphs.iter().flat_map(|p| &p.runs).find_map(|r| solid(r.props.fill.as_ref())))
-                .unwrap_or(dark);
-            tl.colors.push((id, Colors { fill, line, text }));
+            tl.colors.push((id, c));
         }
         tl.index = TimelineIndex::build(&tl.effects, &tl.groups, &tl.colors);
         tl
@@ -502,11 +495,7 @@ impl Timeline {
     ) -> AnimState {
         let para = para.map(|p| self.index.owner.get(&(shape, p)).copied().unwrap_or(p));
         let mine = self.index.by_target.get(&(shape, para)).map_or(&[][..], Vec::as_slice).iter().filter_map(|&i| self.effects.get(i));
-        let base = self.index.color.get(&shape).copied().unwrap_or(Colors {
-            fill: Rgba::rgb(0x15, 0x60, 0x82),
-            line: Rgba::rgb(0x15, 0x60, 0x82),
-            text: Rgba::rgb(0, 0, 0),
-        });
+        let base_color = self.index.color.get(&shape).copied().unwrap_or(Rgba::rgb(0x15, 0x60, 0x82));
         let mut st = AnimState::default();
         // Initial visibility comes from the first effect in the Animation Pane order.
         let mut ordered: Vec<&Effect> = mine.collect();
@@ -531,7 +520,11 @@ impl Timeline {
                 Sequence::Main => (step, t),
                 Sequence::Trigger(tr) => triggers.iter().find(|p| p.trigger == tr).map(|p| (p.step, p.t)).unwrap_or((0, 0.0)),
             };
-            let cur = Colors { fill: st.tint.unwrap_or(base.fill), line: st.line_tint.unwrap_or(base.line), text: st.text_tint.unwrap_or(base.text) };
+            let cur = Colors {
+                fill: st.tint.unwrap_or(base_color),
+                line: st.line_tint.and_then(|c| c.known()),
+                text: st.text_tint.and_then(|c| c.known()),
+            };
             let revert = e.timing.rewind || e.timing.auto_reverse;
             match status(&e.timing, pstep, pt) {
                 Status::NotStarted => {}

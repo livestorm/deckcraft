@@ -4,9 +4,9 @@ use std::f64::consts::PI;
 
 use deckcraft_model::{AnimClass, Rgba, Xfrm};
 
-use crate::AnimState;
 use crate::easing::{bounce_out, ease, smooth};
 use crate::path::{MotionPath, default_path};
+use crate::{AnimState, ColorShift};
 
 /// Everything an effect needs besides its progress.
 #[derive(Clone, Debug)]
@@ -57,13 +57,13 @@ pub(crate) fn exit_base(effect: &str) -> &str {
     }
 }
 
-/// A shape's current colours, where colour emphasis starts from: its fill, its outline and its
-/// text.
+/// Where colour emphasis starts from: the shape's current fill, and its outline and text colours
+/// when an earlier colour change has fixed them (none: the colour the renderer draws).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Colors {
     pub fill: Rgba,
-    pub line: Rgba,
-    pub text: Rgba,
+    pub line: Option<Rgba>,
+    pub text: Option<Rgba>,
 }
 
 /// Emphasis effects whose end state persists after they finish (PowerPoint keeps the spun angle,
@@ -303,8 +303,8 @@ impl EffectSpec {
                 st.opacity = 1.0 - a * e;
             }
             "objectColor" | "fillColor" => st.tint = Some(cur.lerp(target, e)),
-            "lineColor" => st.line_tint = Some(colors.line.lerp(target, e)),
-            "fontColor" => st.text_tint = Some(colors.text.lerp(target, e)),
+            "lineColor" => st.line_tint = Some(ColorShift { from: colors.line, to: target, t: e }),
+            "fontColor" => st.text_tint = Some(ColorShift { from: colors.text, to: target, t: e }),
             "complementaryColor" => st.tint = Some(cur.lerp(Rgba::rgba(255 - cur.r, 255 - cur.g, 255 - cur.b, cur.a), e)),
             "underline" | "boldFlash" => {
                 st.scale_x = 1.0 + 0.04 * bump;

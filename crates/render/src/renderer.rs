@@ -642,10 +642,14 @@ impl Renderer {
         // Placeholders in the editor: dashed outline and prompt, nothing else when empty.
         let empty_ph = s.ph.is_some() && s.text.as_ref().is_none_or(TextBody::is_empty) && !is_pic && !matches!(s.kind, ShapeKind::Media(_));
         let fill = if let Some(t) = st.tint { Some(Fill::solid(deckcraft_model::ColorRef::rgb(t))) } else { fill };
-        // Line Color emphasis recolours the outline the shape draws.
-        let line = match st.line_tint {
-            Some(t) if line.fill.as_ref().is_some_and(|f| !f.is_none()) => {
-                Line { fill: Some(Fill::solid(deckcraft_model::ColorRef::rgb(t))), ..line }
+        // Line Color emphasis recolours the outline the shape draws, from its resolved colour.
+        let line = match (st.line_tint, &line.fill) {
+            (Some(shift), Some(f)) if !f.is_none() => {
+                let drawn = match f {
+                    Fill::Solid { color: c } => shift.apply(rctx.color(c, line_ph)),
+                    _ => shift.to,
+                };
+                Line { fill: Some(Fill::solid(deckcraft_model::ColorRef::rgb(drawn))), ..line }
             }
             _ => line,
         };
@@ -1102,8 +1106,8 @@ impl Renderer {
                 if editing {
                     preview_empty_bullets(&mut l);
                 }
-                if let Some(c) = st.text_tint {
-                    recolor_text(&mut l, c);
+                if st.text_tint.is_some() || st.paras.iter().any(|(_, p)| p.text_tint.is_some()) {
+                    recolor_text(&mut l, st.text_tint, &st.paras);
                 }
                 let tm = text_transform(m, tr, l.rotation);
                 for b in l.lines.iter().filter_map(line_bounds) {
@@ -1280,15 +1284,21 @@ impl Renderer {
     }
 }
 
-/// Font Color emphasis: every glyph run (bullets too) and every underline and strikethrough of
-/// laid-out text in `c`, each keeping its own transparency. Highlights, behind the text, keep
-/// their colour; a gradient fill gives way to the solid colour.
-fn recolor_text(l: &mut deckcraft_text::TextLayout, c: Rgba) {
+/// Font Color emphasis on laid-out text: every glyph run (bullets too) and every underline and
+/// strikethrough moves from its own resolved colour, keeping its transparency. A paragraph's own
+/// change wins over the shape's. Highlights, behind the text, keep their colour; a gradient fill
+/// gives way to the solid colour.
+fn recolor_text(l: &mut deckcraft_text::TextLayout, shape: Option<deckcraft_anim::ColorShift>, paras: &[(usize, ParaState)]) {
+    let shift = |para: usize| paras.iter().find(|(p, _)| *p == para).and_then(|(_, s)| s.text_tint).or(shape);
     for r in l.runs.iter_mut().chain(l.empty_bullets.iter_mut()) {
-        r.color = c.with_alpha(r.color.a);
-        r.gradient = None;
+        if let Some(c) = shift(r.para) {
+            r.color = c.apply(r.color);
+            r.gradient = None;
+        }
     }
     for d in l.decos.iter_mut().filter(|d| !d.behind) {
-        d.color = c.with_alpha(d.color.a);
+        if let Some(c) = shift(d.para) {
+            d.color = c.apply(d.color);
+        }
     }
 }

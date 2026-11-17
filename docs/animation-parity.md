@@ -94,7 +94,7 @@ In, Wipe, Zoom, Float In, Grow/Shrink, Pulse, Spin, motion lines): weighted, ~85
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-17 | minor | Line Color and Font Color emphasis recolour the outline and the text from their own colours; they used to fill the shape (a text box with no fill drew a box behind text that kept its colour) |
+| 2026-11-17 | minor | Line Color and Font Color emphasis recolour the outline and the text, from the colours they are drawn in, by paragraph too; they used to fill the shape (a text box with no fill drew a box behind text that kept its colour), and Font Color by paragraph changed nothing |
 | 2026-10-30 | trivial | Animation Effect Options show readable, effect-aware labels for all gallery option codes; stored values and command parameters stay unchanged |
 | 2026-10-29 | minor | Going back in the show plays the transition of the slide being left, reversed, instead of the previous slide's entrance transition (#1531); new row in the transition features. Scores unchanged |
 | 2026-10-22 | minor | Animation Pane ▸ Play From: with an effect selected, the preview starts at that effect on the play-all clock; the row says yes and the estimate drops to ~14–26 h |

@@ -270,8 +270,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-13 | Video seeks and loops keep newly decoded frames and end-of-stream notifications; stale generations are filtered when consumed (upstream #416). Deterministic queue coverage and repeated seeks across H.264, HEVC, VP9 and AV1 |
 | 2026-10-14 | Presenter View handles the same keyboard navigation as the audience window, consumes handled keys before focused buttons, and remains available at the end screen. Regression tests cover presenter-only input, single-step navigation and Escape |
 | 2026-10-13 | EMF and WMF rectangle clip regions (`INTERSECTCLIPRECT`, `EXCLUDECLIPRECT`, `EXTSELECTCLIPRGN`) limit later drawing. EMF+ records are still skipped |
-| 2026-11-17 | Line Color and Font Color emphasis recolour the outline and the text; they used to fill the shape, so a text box with no fill drew a box behind text that kept its colour |
-| 2026-11-17 | MicroType Express embedded fonts that hold a CFF-flavoured OpenType font, common for brand typefaces, are drawn too; before, only TrueType ones were |
+| 2026-11-17 | Line Color and Font Color emphasis recolour the outline and the text; they used to fill the shape, so a text box with no fill drew a box behind text that kept its colour (npm 0.12.0) |
+| 2026-11-17 | MicroType Express embedded fonts that hold a CFF-flavoured OpenType font, common for brand typefaces, are drawn too; before, only TrueType ones were (npm 0.12.0) |
 | 2026-10-27 | MicroType Express embedded fonts (as PowerPoint writes them) are decompressed and drawn |
 | 2026-10-13 | Embedded fonts (`p:embeddedFontLst`) are read, written and used to draw. TrueType, OpenType and Embedded OpenType faces load; MicroType Express subsets are kept for the round trip and still draw in a stand-in |
 | 2026-10-13 | Codec parsers (#426): H.264 and HEVC quantiser offsets, Matroska block times, Opus granule timing and QuickTime PCM frame sizes are range-checked before the arithmetic, so a hostile number is a format error instead of an overflow |

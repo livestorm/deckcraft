@@ -642,6 +642,13 @@ impl Renderer {
         // Placeholders in the editor: dashed outline and prompt, nothing else when empty.
         let empty_ph = s.ph.is_some() && s.text.as_ref().is_none_or(TextBody::is_empty) && !is_pic && !matches!(s.kind, ShapeKind::Media(_));
         let fill = if let Some(t) = st.tint { Some(Fill::solid(deckcraft_model::ColorRef::rgb(t))) } else { fill };
+        // Line Color emphasis recolours the outline the shape draws.
+        let line = match st.line_tint {
+            Some(t) if line.fill.as_ref().is_some_and(|f| !f.is_none()) => {
+                Line { fill: Some(Fill::solid(deckcraft_model::ColorRef::rgb(t))), ..line }
+            }
+            _ => line,
+        };
         let d = ShapeDraw { f, rctx, s, st, m, w, h, depth, geo, fades, fill, fill_ph, line, line_ph, effects, fx_ph, outline, is_pic, empty_ph };
         self.cast_effects(ctx, &d);
         let soft = d.effects.as_ref().and_then(|e| e.soft_edge).filter(|r| *r > 0.0);
@@ -1095,6 +1102,9 @@ impl Renderer {
                 if editing {
                     preview_empty_bullets(&mut l);
                 }
+                if let Some(c) = st.text_tint {
+                    recolor_text(&mut l, c);
+                }
                 let tm = text_transform(m, tr, l.rotation);
                 for b in l.lines.iter().filter_map(line_bounds) {
                     // Glyphs reach a little past their carets and line box (italics, swashes).
@@ -1267,5 +1277,18 @@ impl Renderer {
             ctx.pop_layer();
             ctx.pop_layer();
         }
+    }
+}
+
+/// Font Color emphasis: every glyph run (bullets too) and every underline and strikethrough of
+/// laid-out text in `c`, each keeping its own transparency. Highlights, behind the text, keep
+/// their colour; a gradient fill gives way to the solid colour.
+fn recolor_text(l: &mut deckcraft_text::TextLayout, c: Rgba) {
+    for r in l.runs.iter_mut().chain(l.empty_bullets.iter_mut()) {
+        r.color = c.with_alpha(r.color.a);
+        r.gradient = None;
+    }
+    for d in l.decos.iter_mut().filter(|d| !d.behind) {
+        d.color = c.with_alpha(d.color.a);
     }
 }

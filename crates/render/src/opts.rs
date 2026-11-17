@@ -13,13 +13,30 @@ pub struct ShapeState {
     pub clip: Option<[f64; 4]>,
     /// Colour override for emphasis effects (fill).
     pub tint: Option<Rgba>,
+    /// Colour override for the outline (Line Color emphasis). Recolours an outline the shape
+    /// draws; it does not add one.
+    pub line_tint: Option<Rgba>,
+    /// Colour override for the text (Font Color emphasis): every glyph run, underline and
+    /// strikethrough takes it, keeping its own transparency.
+    pub text_tint: Option<Rgba>,
     /// Per-paragraph states of by-paragraph text builds (paragraph index, state).
     pub paras: Vec<(usize, ParaState)>,
 }
 
 impl Default for ShapeState {
     fn default() -> Self {
-        ShapeState { visible: true, opacity: 1.0, offset: Vec2::ZERO, scale: (1.0, 1.0), rotate: 0.0, clip: None, tint: None, paras: vec![] }
+        ShapeState {
+            visible: true,
+            opacity: 1.0,
+            offset: Vec2::ZERO,
+            scale: (1.0, 1.0),
+            rotate: 0.0,
+            clip: None,
+            tint: None,
+            line_tint: None,
+            text_tint: None,
+            paras: vec![],
+        }
     }
 }
 

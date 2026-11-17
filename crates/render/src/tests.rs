@@ -137,6 +137,48 @@ fn text_draws_ink() {
     assert!(dark > 500, "dark pixels {dark}");
 }
 
+/// Font Color emphasis recolours the glyphs and leaves the box alone: a text box with no fill
+/// stays unfilled (it used to be filled with the target colour, the text unchanged).
+#[test]
+fn a_text_colour_override_recolours_the_glyphs_not_the_box() {
+    let mut sh = Shape { id: ShapeId(502), xfrm: Some(Xfrm::new(0.0, 0.0, 960.0, 540.0)), text_box: true, ..Default::default() };
+    let mut t = TextBody::from_text("HELLO WORLD");
+    t.paragraphs[0].runs[0].props.size = Some(120.0);
+    sh.text = Some(t);
+    let p = deck_with(vec![sh]);
+    let red = Rgba::rgb(220, 0, 0);
+    let state = |_: ShapeId| ShapeState { text_tint: Some(red), ..Default::default() };
+    let img = render_slide(&p, 0, &RenderOpts { scale: 0.5, state: Some(&state), ..Default::default() });
+    let px = img.pixels.as_chunks::<4>().0;
+    let reds = px.iter().filter(|p| p[0] > 180 && p[1] < 60 && p[2] < 60).count();
+    let blacks = px.iter().filter(|p| p[0] < 60 && p[1] < 60 && p[2] < 60).count();
+    assert!(reds > 500, "the glyphs take the colour: {reds} red pixels");
+    assert_eq!(blacks, 0, "no glyph keeps its own black");
+    assert_eq!(img.pixel(5, 5), [255, 255, 255, 255], "the box stays unfilled");
+}
+
+/// Line Color emphasis recolours the outline only; a shape without one gets none.
+#[test]
+fn a_line_colour_override_recolours_the_outline_only() {
+    use deckcraft_model::style::Line;
+    let outlined = |id: u32, x: f64, line: Option<Line>| Shape {
+        id: ShapeId(id),
+        xfrm: Some(Xfrm::new(x, 100.0, 300.0, 300.0)),
+        geom: Geom::preset("rect"),
+        fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(255, 255, 255)))),
+        line,
+        ..Default::default()
+    };
+    let blue = Line { fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(0, 0, 255)))), width: Some(12.0), ..Default::default() };
+    let p = deck_with(vec![outlined(503, 100.0, Some(blue)), outlined(504, 500.0, None)]);
+    let green = Rgba::rgb(0, 160, 60);
+    let state = |_: ShapeId| ShapeState { line_tint: Some(green), ..Default::default() };
+    let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, state: Some(&state), ..Default::default() });
+    assert_eq!(img.pixel(100, 250)[..3], [0, 160, 60], "the outline takes the colour");
+    assert_eq!(img.pixel(250, 250)[..3], [255, 255, 255], "the fill keeps its own");
+    assert_eq!(img.pixel(500, 250)[..3], [255, 255, 255], "no outline is added");
+}
+
 #[test]
 fn every_preset_renders_without_panic() {
     let shapes: Vec<Shape> = deckcraft_geom::preset::CATALOG

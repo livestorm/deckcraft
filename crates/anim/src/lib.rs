@@ -47,8 +47,9 @@ pub use transition::{DEFAULT_ASPECT, Layer, Source, transition_frame, transition
 /// Animation state of one shape (or one paragraph of a shape's text) at one moment of the show.
 ///
 /// Same meaning as the renderer's `ShapeState`: translation in points, scale and rotation (degrees)
-/// around the shape's centre, a reveal clip in shape-local unit space `[l, t, r, b]`, and a fill
-/// colour override.
+/// around the shape's centre, a reveal clip in shape-local unit space `[l, t, r, b]`, and colour
+/// overrides for the fill, the outline and the text (colour emphasis: Fill Color, Line Color, Font
+/// Color).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AnimState {
     pub visible: bool,
@@ -59,12 +60,31 @@ pub struct AnimState {
     pub scale_y: f64,
     pub rotate: f64,
     pub clip: Option<[f64; 4]>,
+    /// Fill colour override.
     pub tint: Option<Rgba>,
+    /// Outline colour override.
+    #[serde(default)]
+    pub line_tint: Option<Rgba>,
+    /// Text colour override.
+    #[serde(default)]
+    pub text_tint: Option<Rgba>,
 }
 
 impl Default for AnimState {
     fn default() -> Self {
-        AnimState { visible: true, opacity: 1.0, offset_x: 0.0, offset_y: 0.0, scale_x: 1.0, scale_y: 1.0, rotate: 0.0, clip: None, tint: None }
+        AnimState {
+            visible: true,
+            opacity: 1.0,
+            offset_x: 0.0,
+            offset_y: 0.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            rotate: 0.0,
+            clip: None,
+            tint: None,
+            line_tint: None,
+            text_tint: None,
+        }
     }
 }
 
@@ -78,7 +98,7 @@ impl AnimState {
         *self == AnimState::default()
     }
     /// Apply `d` on top of `self`: opacities and scales multiply, offsets and rotations add, clips
-    /// intersect, a tint replaces.
+    /// intersect, each colour override replaces.
     pub fn compose(&self, d: &AnimState) -> AnimState {
         let clip = match (self.clip, d.clip) {
             (Some(a), Some(b)) => Some([a[0].max(b[0]), a[1].max(b[1]), a[2].min(b[2]), a[3].min(b[3])]),
@@ -95,6 +115,8 @@ impl AnimState {
             rotate: self.rotate + d.rotate,
             clip,
             tint: d.tint.or(self.tint),
+            line_tint: d.line_tint.or(self.line_tint),
+            text_tint: d.text_tint.or(self.text_tint),
         }
     }
     /// Replace any non-finite number with its neutral value and clamp opacity and clip.

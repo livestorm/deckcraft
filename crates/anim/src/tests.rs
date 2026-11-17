@@ -171,6 +171,44 @@ fn color_emphasis_tints() {
     assert_eq!(tl.state(ShapeId(1), None, 1, 0.0).tint, Some(Rgba::rgb(255, 0, 0)));
 }
 
+/// Line Color recolours the outline and Font Color the text, each from the shape's own colour;
+/// only Fill Color (and Object Color) change the fill. Font Color used to fill the shape: on a
+/// text box with no fill that drew a box behind text that kept its colour.
+#[test]
+fn color_emphasis_changes_what_it_names() {
+    use deckcraft_model::style::{Fill, Line};
+    use deckcraft_model::text::{Paragraph, Run, TextBody};
+    let white = Rgba::rgb(255, 255, 255);
+    let target = Rgba::rgb(0x14, 0x31, 0x30);
+    let mut slide = slide_with(vec![]);
+    let s = &mut slide.shapes[0];
+    s.line = Some(Line { fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(0, 0, 255)))), ..Default::default() });
+    let mut run = Run::new("Agent");
+    run.props.fill = Some(Fill::solid(ColorRef::rgb(white)));
+    s.text = Some(TextBody { paragraphs: vec![Paragraph { runs: vec![run], ..Default::default() }], ..Default::default() });
+    for effect in ["fillColor", "lineColor", "fontColor"] {
+        let mut a = anim(1, AnimClass::Emphasis, effect, AnimStart::OnClick);
+        a.color = Some(ColorRef::rgb(target));
+        slide.animations = vec![a];
+        let tl = Timeline::new(&slide, W, H);
+        let done = tl.state(ShapeId(1), None, 1, 0.0);
+        let half = tl.state(ShapeId(1), None, 0, 0.5);
+        let (fill, line, text) = (effect == "fillColor", effect == "lineColor", effect == "fontColor");
+        assert_eq!(done.tint, fill.then_some(target), "{effect}: fill");
+        assert_eq!(done.line_tint, line.then_some(target), "{effect}: outline");
+        assert_eq!(done.text_tint, text.then_some(target), "{effect}: text");
+        if text {
+            // Half way from the run's own white, not from a default colour.
+            let c = half.text_tint.unwrap();
+            assert!(c.r > 0x80 && c.g > 0x90, "{c:?}");
+        }
+        if line {
+            let c = half.line_tint.unwrap();
+            assert!(c.b > 0x80 && c.r < 0x20, "half way from the outline's blue: {c:?}");
+        }
+    }
+}
+
 #[test]
 fn every_animation_evaluates_finite() {
     for (id, _, class, _, _, opts) in ANIMATIONS {

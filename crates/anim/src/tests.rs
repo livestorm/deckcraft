@@ -171,6 +171,62 @@ fn color_emphasis_tints() {
     assert_eq!(tl.state(ShapeId(1), None, 1, 0.0).tint, Some(Rgba::rgb(255, 0, 0)));
 }
 
+/// Line Color recolours the outline and Font Color the text; only Fill Color (and Object Color)
+/// change the fill. Font Color used to fill the shape: on a text box with no fill that drew a box
+/// behind text that kept its colour. The outline and text start from the colour the renderer
+/// resolves (left open here), or from where an earlier change left them.
+#[test]
+fn color_emphasis_changes_what_it_names() {
+    let target = Rgba::rgb(0x14, 0x31, 0x30);
+    for effect in ["fillColor", "lineColor", "fontColor"] {
+        let mut a = anim(1, AnimClass::Emphasis, effect, AnimStart::OnClick);
+        a.color = Some(ColorRef::rgb(target));
+        let tl = Timeline::new(&slide_with(vec![a]), W, H);
+        let done = tl.state(ShapeId(1), None, 1, 0.0);
+        let (fill, line, text) = (effect == "fillColor", effect == "lineColor", effect == "fontColor");
+        assert_eq!(done.tint, fill.then_some(target), "{effect}: fill");
+        assert_eq!(done.line_tint.and_then(|c| c.known()), line.then_some(target), "{effect}: outline");
+        assert_eq!(done.text_tint.and_then(|c| c.known()), text.then_some(target), "{effect}: text");
+        let half = tl.state(ShapeId(1), None, 0, 0.5);
+        for shift in [half.line_tint, half.text_tint].into_iter().flatten() {
+            assert_eq!(shift.from, None, "{effect}: starts from the drawn colour");
+            assert!(shift.t > 0.0 && shift.t < 1.0, "{effect}: {shift:?}");
+            assert_eq!(shift.apply(Rgba::rgb(255, 255, 255)), Rgba::rgb(255, 255, 255).lerp(target, shift.t));
+        }
+    }
+}
+
+/// A second Font Color starts where the first one left the text.
+#[test]
+fn a_second_font_color_starts_from_the_first() {
+    let (red, blue) = (Rgba::rgb(255, 0, 0), Rgba::rgb(0, 0, 255));
+    let mut a = anim(1, AnimClass::Emphasis, "fontColor", AnimStart::OnClick);
+    a.color = Some(ColorRef::rgb(red));
+    let mut b = anim(1, AnimClass::Emphasis, "fontColor", AnimStart::OnClick);
+    b.color = Some(ColorRef::rgb(blue));
+    let tl = Timeline::new(&slide_with(vec![a, b]), W, H);
+    let shift = tl.state(ShapeId(1), None, 1, 0.5).text_tint.unwrap();
+    assert_eq!((shift.from, shift.to), (Some(red), blue));
+}
+
+/// Font Color by paragraph lands on each paragraph's own state, not the shape's.
+#[test]
+fn font_color_by_paragraph_is_a_paragraph_change() {
+    let mut slide = slide_with(vec![]);
+    slide.shapes[0].text = Some(deckcraft_model::text::TextBody::from_text("one\ntwo"));
+    let mut a = anim(1, AnimClass::Emphasis, "fontColor", AnimStart::OnClick);
+    a.color = Some(ColorRef::rgb(Rgba::rgb(255, 0, 0)));
+    a.text_build = TextBuild::ByParagraph;
+    slide.animations = vec![a];
+    let tl = Timeline::new(&slide, W, H);
+    let paras = tl.paragraph_targets(ShapeId(1));
+    assert!(!paras.is_empty());
+    let done = tl.steps();
+    for p in paras {
+        assert_eq!(tl.state(ShapeId(1), Some(p), done, 0.0).text_tint.and_then(|c| c.known()), Some(Rgba::rgb(255, 0, 0)), "paragraph {p}");
+    }
+}
+
 #[test]
 fn every_animation_evaluates_finite() {
     for (id, _, class, _, _, opts) in ANIMATIONS {

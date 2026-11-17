@@ -4,9 +4,9 @@ use std::f64::consts::PI;
 
 use deckcraft_model::{AnimClass, Rgba, Xfrm};
 
-use crate::AnimState;
 use crate::easing::{bounce_out, ease, smooth};
 use crate::path::{MotionPath, default_path};
+use crate::{AnimState, ColorShift};
 
 /// Everything an effect needs besides its progress.
 #[derive(Clone, Debug)]
@@ -57,6 +57,15 @@ pub(crate) fn exit_base(effect: &str) -> &str {
     }
 }
 
+/// Where colour emphasis starts from: the shape's current fill, and its outline and text colours
+/// when an earlier colour change has fixed them (none: the colour the renderer draws).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Colors {
+    pub fill: Rgba,
+    pub line: Option<Rgba>,
+    pub text: Option<Rgba>,
+}
+
 /// Emphasis effects whose end state persists after they finish (PowerPoint keeps the spun angle,
 /// the new size, the new colour and transparency).
 pub(crate) fn emphasis_persists(effect: &str) -> bool {
@@ -91,9 +100,9 @@ impl EffectSpec {
         }
     }
 
-    /// The state delta at linear progress `p` (0..1) while the effect plays. `cur` is the shape's
-    /// current fill colour (for colour emphasis).
-    pub fn eval(&self, p: f64, cur: Rgba) -> AnimState {
+    /// The state delta at linear progress `p` (0..1) while the effect plays. `cur` holds the
+    /// shape's current colours (for colour emphasis).
+    pub fn eval(&self, p: f64, cur: Colors) -> AnimState {
         let p = crate::clampf(p, 0.0, 1.0, 0.0);
         let s = match self.class {
             AnimClass::Entrance => self.entrance(p, false),
@@ -106,7 +115,7 @@ impl EffectSpec {
     }
 
     /// The state the effect leaves behind once done.
-    pub fn end_state(&self, cur: Rgba) -> AnimState {
+    pub fn end_state(&self, cur: Colors) -> AnimState {
         match self.class {
             AnimClass::Entrance | AnimClass::Media => AnimState::default(),
             AnimClass::Exit => AnimState::hidden(),
@@ -250,7 +259,10 @@ impl EffectSpec {
         st
     }
 
-    fn emphasis(&self, p: f64, cur: Rgba) -> AnimState {
+    /// Each colour effect changes what it names: Line Color the outline, Font Color the text, the
+    /// others the fill.
+    fn emphasis(&self, p: f64, colors: Colors) -> AnimState {
+        let cur = colors.fill;
         let e = self.eased(p);
         let bump = (p * PI).sin();
         let mut st = AnimState::default();
@@ -290,7 +302,9 @@ impl EffectSpec {
                 let a = self.amount.filter(|a| a.is_finite()).unwrap_or(0.5).clamp(0.0, 1.0);
                 st.opacity = 1.0 - a * e;
             }
-            "objectColor" | "fillColor" | "lineColor" | "fontColor" => st.tint = Some(cur.lerp(target, e)),
+            "objectColor" | "fillColor" => st.tint = Some(cur.lerp(target, e)),
+            "lineColor" => st.line_tint = Some(ColorShift { from: colors.line, to: target, t: e }),
+            "fontColor" => st.text_tint = Some(ColorShift { from: colors.text, to: target, t: e }),
             "complementaryColor" => st.tint = Some(cur.lerp(Rgba::rgba(255 - cur.r, 255 - cur.g, 255 - cur.b, cur.a), e)),
             "underline" | "boldFlash" => {
                 st.scale_x = 1.0 + 0.04 * bump;

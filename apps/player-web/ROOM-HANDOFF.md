@@ -3,6 +3,28 @@
 What the webinar room has to do to adopt each version of `@livestorm/deckcraft-player`. The API is
 documented in the package's README and at the top of `player.js` and `worker.js`.
 
+## 0.12.0: embedded fonts drawn, Line Color and Font Color animations fixed
+
+PowerPoint compresses the fonts it embeds in a deck (MicroType Express), and 0.11.0 could not read
+them: text in an embedded face drew in a stand-in, or in whatever the font server had under that
+name. A brand face that is not on the font server, as in a customer's webinar deck, always drew in
+a stand-in. Now embedded faces are decompressed and drawn, TrueType and CFF-flavoured OpenType
+alike.
+
+**Nothing to change in the room** beyond the version. Options, events and messages are the same.
+
+**What the room sees:**
+
+- Text in a face the deck embeds draws in that face. The player no longer asks the font server
+  (`fontsBase`) for those families, so `fonts` lists them in neither `loaded` nor `missing`, and a
+  deck that embeds all its faces makes no font requests at all.
+- Opening a deck that embeds fonts takes longer: each embedded face is decompressed before the
+  first frame. A deck embedding 25 faces opened in about 1.0 s instead of 0.4 s in Chromium.
+- Line Color and Font Color animations recolour the outline and the text. They used to fill the
+  shape instead: a Font Color step on a text box with no fill drew a solid box behind text that
+  kept its colour. Font Color by paragraph, which changed nothing, now recolours each paragraph.
+  Colour changes start from the colour drawn, so nothing jumps when one begins.
+
 ## 0.11.0: linked pictures released as their slides move away
 
 0.10.0 fetches pictures by window but never lets go of one, and caps a deck at 256 MB of linked

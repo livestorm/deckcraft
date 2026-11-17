@@ -8,7 +8,7 @@ use deckcraft_model::style::Fill;
 use deckcraft_model::{AnimClass, AnimStart, Animation, ColorScheme, Rgba, SchemeSlot, Shape, ShapeId, Slide, Xfrm};
 
 use crate::AnimState;
-use crate::effects::{EffectSpec, exit_base, motion_path};
+use crate::effects::{Colors, EffectSpec, exit_base, motion_path};
 
 /// Delay between paragraphs of a by-paragraph build that isn't on click (seconds).
 pub const PARAGRAPH_STAGGER: f64 = 0.5;
@@ -353,6 +353,8 @@ impl Timeline {
             if !colored.insert(id) {
                 continue;
             }
+            // Outline and text colours are left to the renderer, which resolves them
+            // (`ColorShift`).
             let c = match shapes.get(&id).copied().and_then(|s| s.fill.as_ref()) {
                 Some(Fill::Solid { color }) => resolve(color),
                 _ => accent,
@@ -518,7 +520,11 @@ impl Timeline {
                 Sequence::Main => (step, t),
                 Sequence::Trigger(tr) => triggers.iter().find(|p| p.trigger == tr).map(|p| (p.step, p.t)).unwrap_or((0, 0.0)),
             };
-            let cur = st.tint.unwrap_or(base_color);
+            let cur = Colors {
+                fill: st.tint.unwrap_or(base_color),
+                line: st.line_tint.and_then(|c| c.known()),
+                text: st.text_tint.and_then(|c| c.known()),
+            };
             let revert = e.timing.rewind || e.timing.auto_reverse;
             match status(&e.timing, pstep, pt) {
                 Status::NotStarted => {}

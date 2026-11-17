@@ -47,8 +47,9 @@ pub use transition::{DEFAULT_ASPECT, Layer, Source, transition_frame, transition
 /// Animation state of one shape (or one paragraph of a shape's text) at one moment of the show.
 ///
 /// Same meaning as the renderer's `ShapeState`: translation in points, scale and rotation (degrees)
-/// around the shape's centre, a reveal clip in shape-local unit space `[l, t, r, b]`, and a fill
-/// colour override.
+/// around the shape's centre, a reveal clip in shape-local unit space `[l, t, r, b]`, and colour
+/// overrides for the fill, the outline and the text (colour emphasis: Fill Color, Line Color, Font
+/// Color).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AnimState {
     pub visible: bool,
@@ -59,12 +60,58 @@ pub struct AnimState {
     pub scale_y: f64,
     pub rotate: f64,
     pub clip: Option<[f64; 4]>,
+    /// Fill colour override.
     pub tint: Option<Rgba>,
+    /// Outline colour change (Line Color).
+    #[serde(default)]
+    pub line_tint: Option<ColorShift>,
+    /// Text colour change (Font Color).
+    #[serde(default)]
+    pub text_tint: Option<ColorShift>,
+}
+
+/// A colour moving to `to`, `t` of the way (0..1) from `from`, or from the colour the renderer
+/// would draw when `from` is none. The renderer knows a run's or an outline's resolved colour
+/// (its own, its paragraph's, its style's, its placeholder's); the timeline does not, so it leaves
+/// the start open unless an earlier colour change fixed it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ColorShift {
+    pub from: Option<Rgba>,
+    pub to: Rgba,
+    pub t: f64,
+}
+
+impl ColorShift {
+    /// The colour to draw in place of `drawn`, with `drawn`'s own transparency.
+    pub fn apply(&self, drawn: Rgba) -> Rgba {
+        self.from.unwrap_or(drawn).lerp(self.to, self.t).with_alpha(drawn.a)
+    }
+
+    /// Where the colour stands, when that does not depend on the drawn colour.
+    pub fn known(&self) -> Option<Rgba> {
+        if self.t >= 1.0 { Some(self.to) } else { self.from.map(|f| f.lerp(self.to, self.t)) }
+    }
+
+    fn sanitized(self) -> ColorShift {
+        ColorShift { t: if self.t.is_finite() { self.t.clamp(0.0, 1.0) } else { 1.0 }, ..self }
+    }
 }
 
 impl Default for AnimState {
     fn default() -> Self {
-        AnimState { visible: true, opacity: 1.0, offset_x: 0.0, offset_y: 0.0, scale_x: 1.0, scale_y: 1.0, rotate: 0.0, clip: None, tint: None }
+        AnimState {
+            visible: true,
+            opacity: 1.0,
+            offset_x: 0.0,
+            offset_y: 0.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            rotate: 0.0,
+            clip: None,
+            tint: None,
+            line_tint: None,
+            text_tint: None,
+        }
     }
 }
 
@@ -78,7 +125,7 @@ impl AnimState {
         *self == AnimState::default()
     }
     /// Apply `d` on top of `self`: opacities and scales multiply, offsets and rotations add, clips
-    /// intersect, a tint replaces.
+    /// intersect, each colour override replaces.
     pub fn compose(&self, d: &AnimState) -> AnimState {
         let clip = match (self.clip, d.clip) {
             (Some(a), Some(b)) => Some([a[0].max(b[0]), a[1].max(b[1]), a[2].min(b[2]), a[3].min(b[3])]),
@@ -95,6 +142,8 @@ impl AnimState {
             rotate: self.rotate + d.rotate,
             clip,
             tint: d.tint.or(self.tint),
+            line_tint: d.line_tint.or(self.line_tint),
+            text_tint: d.text_tint.or(self.text_tint),
         }
     }
     /// Replace any non-finite number with its neutral value and clamp opacity and clip.
@@ -113,6 +162,8 @@ impl AnimState {
             let b = f(c[3], 1.0).clamp(0.0, 1.0);
             [l, t, r.max(l), b.max(t)]
         });
+        self.line_tint = self.line_tint.map(ColorShift::sanitized);
+        self.text_tint = self.text_tint.map(ColorShift::sanitized);
         self
     }
 }

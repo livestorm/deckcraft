@@ -137,6 +137,90 @@ fn text_draws_ink() {
     assert!(dark > 500, "dark pixels {dark}");
 }
 
+fn big_text(id: u32, text: &str) -> Shape {
+    let mut sh = Shape { id: ShapeId(id), xfrm: Some(Xfrm::new(0.0, 0.0, 960.0, 540.0)), text_box: true, ..Default::default() };
+    let mut t = TextBody::from_text(text);
+    for p in &mut t.paragraphs {
+        for r in &mut p.runs {
+            r.props.size = Some(120.0);
+        }
+    }
+    sh.text = Some(t);
+    sh
+}
+
+fn shift(to: Rgba, t: f64) -> deckcraft_anim::ColorShift {
+    deckcraft_anim::ColorShift { from: None, to, t }
+}
+
+/// Pixels in rows `y0..y1` that are (nearly) `c`.
+fn count_near(img: &Image, c: [u8; 3], y0: u32, y1: u32) -> usize {
+    let near = |p: [u8; 4]| (0..3).all(|i| (p[i] as i32 - c[i] as i32).abs() <= 12);
+    (y0..y1).flat_map(|y| (0..img.width).map(move |x| (x, y))).filter(|&(x, y)| near(img.pixel(x, y))).count()
+}
+
+/// Font Color emphasis recolours the glyphs and leaves the box alone: a text box with no fill
+/// stays unfilled (it used to be filled with the target colour, the text unchanged).
+#[test]
+fn a_text_colour_change_recolours_the_glyphs_not_the_box() {
+    let p = deck_with(vec![big_text(502, "HELLO WORLD")]);
+    let state = |_: ShapeId| ShapeState { text_tint: Some(shift(Rgba::rgb(220, 0, 0), 1.0)), ..Default::default() };
+    let img = render_slide(&p, 0, &RenderOpts { scale: 0.5, state: Some(&state), ..Default::default() });
+    assert!(count_near(&img, [220, 0, 0], 0, img.height) > 500, "the glyphs take the colour");
+    assert_eq!(count_near(&img, [0, 0, 0], 0, img.height), 0, "no glyph keeps its own black");
+    assert_eq!(img.pixel(5, 5), [255, 255, 255, 255], "the box stays unfilled");
+}
+
+/// Half way, the text is half way from the colour it is drawn in (here the default black), not
+/// from a guessed one.
+#[test]
+fn a_text_colour_change_starts_from_the_drawn_colour() {
+    let p = deck_with(vec![big_text(505, "HELLO WORLD")]);
+    let state = |_: ShapeId| ShapeState { text_tint: Some(shift(Rgba::rgb(220, 0, 0), 0.5)), ..Default::default() };
+    let img = render_slide(&p, 0, &RenderOpts { scale: 0.5, state: Some(&state), ..Default::default() });
+    assert!(count_near(&img, [110, 0, 0], 0, img.height) > 500, "half way from black to red");
+}
+
+/// Font Color by paragraph recolours that paragraph only (paragraph states used to carry no
+/// colour, so the change was lost).
+#[test]
+fn a_paragraph_colour_change_recolours_that_paragraph_only() {
+    let p = deck_with(vec![big_text(506, "TOP\nBOTTOM")]);
+    let paras = vec![(0, super::ParaState { text_tint: Some(shift(Rgba::rgb(220, 0, 0), 1.0)), ..Default::default() })];
+    let state = |_: ShapeId| ShapeState { paras: paras.clone(), ..Default::default() };
+    let img = render_slide(&p, 0, &RenderOpts { scale: 0.5, state: Some(&state), ..Default::default() });
+    let rows = |c: [u8; 3]| (0..img.height).filter(|&y| count_near(&img, c, y, y + 1) > 0).collect::<Vec<_>>();
+    let (red, black) = (rows([220, 0, 0]), rows([0, 0, 0]));
+    assert!(count_near(&img, [220, 0, 0], 0, img.height) > 300, "the first paragraph is red");
+    assert!(count_near(&img, [0, 0, 0], 0, img.height) > 300, "the second paragraph keeps its black");
+    assert!(red.last() < black.first(), "red only on the first line: red rows {red:?}, black rows {black:?}");
+}
+
+/// Line Color emphasis recolours the outline only, from its own colour; a shape without an
+/// outline gets none.
+#[test]
+fn a_line_colour_change_recolours_the_outline_only() {
+    use deckcraft_model::style::Line;
+    let outlined = |id: u32, x: f64, line: Option<Line>| Shape {
+        id: ShapeId(id),
+        xfrm: Some(Xfrm::new(x, 100.0, 300.0, 300.0)),
+        geom: Geom::preset("rect"),
+        fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(255, 255, 255)))),
+        line,
+        ..Default::default()
+    };
+    let blue = Line { fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(0, 0, 255)))), width: Some(12.0), ..Default::default() };
+    let p = deck_with(vec![outlined(503, 100.0, Some(blue)), outlined(504, 500.0, None)]);
+    let green = Rgba::rgb(0, 160, 60);
+    for (t, outline) in [(1.0, [0, 160, 60]), (0.5, [0, 80, 158])] {
+        let state = |_: ShapeId| ShapeState { line_tint: Some(shift(green, t)), ..Default::default() };
+        let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, state: Some(&state), ..Default::default() });
+        assert_eq!(img.pixel(100, 250)[..3], outline, "the outline at {t}, from its own blue");
+        assert_eq!(img.pixel(250, 250)[..3], [255, 255, 255], "the fill keeps its own");
+        assert_eq!(img.pixel(500, 250)[..3], [255, 255, 255], "no outline is added");
+    }
+}
+
 #[test]
 fn every_preset_renders_without_panic() {
     let shapes: Vec<Shape> = deckcraft_geom::preset::CATALOG

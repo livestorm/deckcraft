@@ -600,12 +600,22 @@ fn state_for(tl: &Timeline, id: ShapeId, step: usize, t: f64, plays: &[TriggerPl
         rotate: a.rotate,
         clip: a.clip,
         tint: a.tint,
+        line_tint: a.line_tint,
+        text_tint: a.text_tint,
         paras: tl
             .paragraph_targets(id)
             .into_iter()
             .map(|p| {
                 let a = tl.state(id, Some(p), step, t);
-                (p, ParaState { visible: a.visible, opacity: a.opacity, offset: deckcraft_geom::Vec2::new(a.offset_x, a.offset_y) })
+                (
+                    p,
+                    ParaState {
+                        visible: a.visible,
+                        opacity: a.opacity,
+                        offset: deckcraft_geom::Vec2::new(a.offset_x, a.offset_y),
+                        text_tint: a.text_tint,
+                    },
+                )
             })
             .collect(),
     }

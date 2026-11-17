@@ -1,4 +1,5 @@
 use super::{DateTime, Fields, Rgba, ShapeId, Vec2, datetime};
+pub use deckcraft_anim::ColorShift;
 
 /// Animation state of one shape during a slide show or preview.
 #[derive(Clone, Debug)]
@@ -13,13 +14,31 @@ pub struct ShapeState {
     pub clip: Option<[f64; 4]>,
     /// Colour override for emphasis effects (fill).
     pub tint: Option<Rgba>,
+    /// Outline colour change (Line Color emphasis), from the outline's resolved colour. Recolours
+    /// an outline the shape draws; it does not add one.
+    pub line_tint: Option<ColorShift>,
+    /// Text colour change (Font Color emphasis), from each run's resolved colour: every glyph
+    /// run, underline and strikethrough, keeping its own transparency. A paragraph's own change
+    /// (`ParaState::text_tint`) wins over this one.
+    pub text_tint: Option<ColorShift>,
     /// Per-paragraph states of by-paragraph text builds (paragraph index, state).
     pub paras: Vec<(usize, ParaState)>,
 }
 
 impl Default for ShapeState {
     fn default() -> Self {
-        ShapeState { visible: true, opacity: 1.0, offset: Vec2::ZERO, scale: (1.0, 1.0), rotate: 0.0, clip: None, tint: None, paras: vec![] }
+        ShapeState {
+            visible: true,
+            opacity: 1.0,
+            offset: Vec2::ZERO,
+            scale: (1.0, 1.0),
+            rotate: 0.0,
+            clip: None,
+            tint: None,
+            line_tint: None,
+            text_tint: None,
+            paras: vec![],
+        }
     }
 }
 
@@ -30,11 +49,13 @@ pub struct ParaState {
     pub opacity: f64,
     /// Translation in shape-local points.
     pub offset: Vec2,
+    /// Text colour change of this paragraph (Font Color by paragraph).
+    pub text_tint: Option<ColorShift>,
 }
 
 impl Default for ParaState {
     fn default() -> Self {
-        ParaState { visible: true, opacity: 1.0, offset: Vec2::ZERO }
+        ParaState { visible: true, opacity: 1.0, offset: Vec2::ZERO, text_tint: None }
     }
 }
 

@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-04 · **Change:** trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-17 · **Change:** trivial (embedded MicroType Express fonts drawn, including CFF-flavoured OpenType faces; the gap is closed; previous: trivial, workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -149,11 +149,6 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Impact:** sharing a talk as a video is a common request.
 - **Estimate:** 10–16 h (render the timeline frame by frame, which the GIF can then reuse for
   transitions and builds; an H.264 encoder is the hard part, FilmCraft has one to copy).
-
-### Embedded MicroType Express font subsets aren't drawn
-- **Evidence:** `p:embeddedFontLst` is read and written. A raw TrueType/OpenType face, or one inside an Embedded OpenType wrapper, is loaded and used to draw. A MicroType Express subset (`application/x-fontdata` with neither form) is kept and written back, and the text still uses a stand-in.
-- **Impact:** decks that embed a MicroType subset reflow until that face is installed.
-- **Estimate:** 3–5 h.
 
 ## Features
 
@@ -395,6 +390,8 @@ Detail in [localization-parity.md](localization-parity.md).
 | 2026-10-14 | minor | Community PR wave folded: one entry each for the soak tests (engine and UI), the PPTX corpus (seven owned corpus files), edit points / text warp / 3-D, proofing (Hunspell spelling, thesaurus, AutoCorrect), the smaller missing rows, dialogs (41 vs ~60; Print and Insert Object left) and pen/trackpad input; ranked rows 3, 4 and 10 de-duplicated (comment threads #70 and the pane timeline are done); the fixed command-palette entry (#79) removed |
 | 2026-10-13 | minor | EMF/WMF rectangle clip regions (`INTERSECTCLIPRECT`, `EXCLUDECLIPRECT`, `EXTSELECTCLIPRGN`) limit later drawing. EMF+ records remain |
 | 2026-10-13 | minor | Embedded fonts are read, written and drawn (TrueType, OpenType, Embedded OpenType). The gap is now MicroType Express subsets, which are kept but not drawn |
+| 2026-10-27 | minor | MicroType Express embedded fonts are decompressed and drawn; the gap is closed |
+| 2026-11-17 | trivial | MicroType Express faces that hold a CFF-flavoured OpenType font are drawn too; before, only TrueType ones were |
 | 2026-10-13 | minor | WordArt Transform gallery: Shape Format ▸ Text Effects lists the 40 presets and No Transform; `format.textWarp` applies one (adjust handles still open) |
 | 2026-10-13 | minor | Edit Points: smooth/straight/corner point types, Bézier handle dragging, right-click point menu, no selection box while editing |
 | 2026-10-13 | minor | Edit Points: convert to freeform, drag, add and delete vertices (`shape.editPoints`, `shape.movePoint`, `shape.addPoint`, `shape.deletePoint`); left: point types and control handles |

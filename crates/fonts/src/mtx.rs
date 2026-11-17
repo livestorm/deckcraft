@@ -1,6 +1,8 @@
 //! MicroType Express (MTX) decompression, written from the public W3C member submission
 //! "MicroType Express (MTX) Font Format" (2008). An MTX font is a TrueType font in the Compact Table
 //! Format (CTF) split into three LZCOMP streams; [`decompress`] turns it back into a TrueType font.
+//! A CFF-flavoured OpenType font (`OTTO`) has no glyphs to translate: its tables are stored as
+//! they are, and come back unchanged.
 //!
 //! Two device-metric tables, `hdmx` and `VDMX`, are left out of the result: they only help hinted
 //! rendering at fixed pixel sizes, and nothing here uses them.
@@ -10,7 +12,8 @@ const PRELOAD: usize = 2 * 32 * 96 + 4 * 256;
 /// The largest font or stream this reads or builds.
 const MAX_OUT: usize = 64 << 20;
 
-/// The TrueType font inside an MTX stream, or none when the data is not a valid MTX font.
+/// The TrueType or CFF OpenType font inside an MTX stream, or none when the data is not a valid
+/// MTX font.
 pub fn decompress(mtx: &[u8]) -> Option<Vec<u8>> {
     let version = *mtx.first()?;
     if !(1..=3).contains(&version) {
@@ -22,6 +25,11 @@ pub fn decompress(mtx: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     let tables = unpack(mtx.get(10..off2)?, version)?;
+    // A CFF-flavoured OpenType font has no `glyf` to translate: its tables are stored as they
+    // are, so the table stream is the font.
+    if tables.starts_with(b"OTTO") {
+        return Some(tables);
+    }
     let push = unpack(mtx.get(off2..off3)?, version)?;
     let code = unpack(mtx.get(off3..)?, version)?;
     rebuild(&tables, &push, &code)
@@ -1130,6 +1138,30 @@ mod tests {
                 b"hdmx" | b"VDMX" => assert!(kept.is_none()),
                 _ => assert!(kept.is_some_and(|k| k.1 == *data), "{}", String::from_utf8_lossy(tag)),
             }
+        }
+    }
+
+    /// A CFF-flavoured OpenType font (`OTTO`, a `CFF ` table and no `glyf`) has nothing to
+    /// translate: PowerPoint stores its tables as they are, with empty push and code streams.
+    /// Brand fonts are often CFF, and these failed before (the rebuild looked for `glyf`).
+    #[test]
+    fn a_cff_font_comes_back_as_it_was_stored() {
+        let cff: Vec<u8> = (0..=255u8).cycle().take(1000).collect();
+        let mut font = b"OTTO".to_vec();
+        font.extend([0, 1, 0, 16, 0, 0, 0, 0]);
+        font.extend(b"CFF ");
+        font.extend([0; 4]);
+        font.extend(28u32.to_be_bytes());
+        font.extend((cff.len() as u32).to_be_bytes());
+        font.extend(&cff);
+        for (escape, flags) in [(None, 0x4), (Some(0), 0x4), (Some(0x41), 0x1000_0004)] {
+            let (a, b, c) = (pack(&font, escape), pack(&[], escape), pack(&[], escape));
+            let mut mtx = vec![3, 0, 0, 0];
+            mtx.extend(&((10 + a.len()) as u32).to_be_bytes()[1..]);
+            mtx.extend(&((10 + a.len() + b.len()) as u32).to_be_bytes()[1..]);
+            mtx.extend([a, b, c].concat());
+            let part = eot(&if flags & 0x1000_0000 != 0 { mtx.iter().map(|b| b ^ 0x50).collect() } else { mtx }, flags);
+            assert_eq!(crate::embedded_sfnt(&part).as_deref(), Some(&font[..]), "run-length escape {escape:?}");
         }
     }
 

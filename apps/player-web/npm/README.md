@@ -165,7 +165,7 @@ clip to give someone who joins:
 - everyone hears the clip as the presenter set it, as an audience hears the presenter's computer in
   PowerPoint. A clip starts with the deck's volume and Mute, kept apart: a clip muted in PowerPoint
   unmutes at its own volume. A change of sound is sent as what the clip is doing at that moment, so
-  players before 0.13.0, which ignore `volume` and `muted`, just keep to it; an action without them
+  older players, which ignore `volume` and `muted`, just keep to it; an action without them
   leaves the sound as it is. A YouTube video's own controls report no volume changes;
 - a browser that won't unmute a playing clip before the viewer has clicked in the page pauses it;
   the player then reports `sound-blocked`, as for any play refused for its sound, and keeps the

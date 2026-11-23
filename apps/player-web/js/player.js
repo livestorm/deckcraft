@@ -31,7 +31,7 @@
 // `volume` (0-1) and `muted` are the clip's sound then. Pass every media action to p.mediaAction(a)
 // on every client, and hand the latest one per clip to someone joining: playing clips keep to it,
 // and everyone hears the clip as its presenter set it. A clip starts with the deck's own volume and
-// Mute. Actions without `volume` or `muted` (players before 0.13.0) leave the sound as it is.
+// Mute. Actions without `volume` or `muted` (older players) leave the sound as it is.
 // `clock` gives the time in ms that all clients share, best the server's: Date.now by default.
 // A YouTube video (PowerPoint's online video) plays in YouTube's player, in privacy-enhanced mode;
 // one that can't play gives error({message: 'video-unavailable', fatal: false}).
@@ -721,7 +721,7 @@ export class DeckcraftPlayer {
 
   // A presenter's own plays, pauses, seeks and sound changes, for everyone else to follow: not the
   // player's own. A seek or a change of volume or mute is sent as what the clip is doing (play or
-  // pause) at its time then, so players before 0.13.0 just keep to it. Each action carries the sound.
+  // pause) at its time then, so older players just keep to it. Each action carries the sound.
   report (clip) {
     const { el, shape } = clip
     const send = action => {

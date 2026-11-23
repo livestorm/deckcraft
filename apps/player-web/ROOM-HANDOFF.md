@@ -3,7 +3,9 @@
 What the webinar room has to do to adopt each version of `@livestorm/deckcraft-player`. The API is
 documented in the package's README and at the top of `player.js` and `worker.js`.
 
-## 0.13.0: a clip's volume and Mute kept apart
+## Unreleased: a clip's volume and Mute kept apart
+
+Draft for the next release (merged into its section when the version is set).
 
 A customer reported that the sound button on videos did nothing until the volume slider was moved,
 and that a slide's video was locked on mute. The deck's video was muted in PowerPoint, which saved
@@ -29,7 +31,7 @@ else, so attendees, who have no controls, can never hear a clip that starts mute
 
 **What to change in the room** (`deckcraft-player.ts` has its own media layer):
 
-1. Bump `@livestorm/deckcraft-player` to 0.13.0.
+1. Bump `@livestorm/deckcraft-player` to the release with this change.
 2. In `buildMedia`, set both: `el.volume = clamp(c.volume ?? 1)` and `el.muted = !!c.muted`. That
    alone fixes the dead mute button.
 3. Send a presenter's volume and mute changes (the element's `volumechange`, not the player's own

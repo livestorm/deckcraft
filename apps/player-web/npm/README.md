@@ -156,10 +156,20 @@ notes}]}` or `{type: 'notesError', message}`.
 
 ## Keeping media in step
 
-With `controls`, a presenter's play, pause or seek in a clip's controls is sent as
-`mediaAction({shape, action, at, time})`: the clip plays or pauses `at` seconds in, as of `time` on
-the player's `clock`. Pass each one to `player.mediaAction(a)` on every client, the presenter's
-included, and keep the latest one per clip to give someone who joins:
+With `controls`, a presenter's play, pause or seek in a clip's controls, or a change of its volume or
+mute, is sent as `mediaAction({shape, action, at, time, volume, muted})`: the clip plays or pauses
+`at` seconds in, as of `time` on the player's `clock`, at `volume` (0–1) and `muted`. Pass each one
+to `player.mediaAction(a)` on every client, the presenter's included, and keep the latest one per
+clip to give someone who joins:
+
+- everyone hears the clip as the presenter set it, as an audience hears the presenter's computer in
+  PowerPoint. A clip starts with the deck's volume and Mute, kept apart: a clip muted in PowerPoint
+  unmutes at its own volume. A change of sound is sent as what the clip is doing at that moment, so
+  older players, which ignore `volume` and `muted`, just keep to it; an action without them
+  leaves the sound as it is. A YouTube video's own controls report no volume changes;
+- a browser that won't unmute a playing clip before the viewer has clicked in the page pauses it;
+  the player then reports `sound-blocked`, as for any play refused for its sound, and keeps the
+  presenter's sound for when the clip is played again;
 
 - a playing clip starts where it has got to since `time`, so a late message or a newcomer lands
   where everyone else is (a looping clip goes round its loop; one that would have ended stays put);

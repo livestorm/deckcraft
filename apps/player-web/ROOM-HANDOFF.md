@@ -3,6 +3,48 @@
 What the webinar room has to do to adopt each version of `@livestorm/deckcraft-player`. The API is
 documented in the package's README and at the top of `player.js` and `worker.js`.
 
+## Unreleased: a clip's volume and Mute kept apart
+
+Draft for the next release (merged into its section when the version is set).
+
+A customer reported that the sound button on videos did nothing until the volume slider was moved,
+and that a slide's video was locked on mute. The deck's video was muted in PowerPoint, which saved
+it as volume 0 (`vol="0"`). 0.12.0 gave the room that volume of 0 (and read the `mute` attribute
+as 0 too), so the native mute button unmuted a clip still at volume 0. Separately, a presenter's volume and mute changes reach no one
+else, so attendees, who have no controls, can never hear a clip that starts muted.
+
+**What changes in the package:**
+
+- The worker's `ready` message, `{type: 'ready', info, media, openMs}`, gives each clip in `media`
+  a new `muted: boolean` beside `volume`. `volume` (0–1) is now the deck's real level, kept while
+  muted. The rule: `muted` is true when the deck says `mute="1"` or its volume is 0 (how PowerPoint
+  saves Mute); a muted clip whose deck volume is 0 or absent gets `volume: 1`; any other volume, low
+  ones included (0.08 is the author's choice), is passed as it is, unmuted. `volume` is never 0.
+- The same rule for the current 0.12.0 player, which has no `muted`: treat `volume === 0` as
+  `muted: true, volume: 1`.
+- `YouTubeClip` (exported from `player.js`) has a `muted` property: setting it mutes or unmutes
+  YouTube's player, now or once it is ready.
+- `player.js`'s own `DeckcraftPlayer` (not the room's) applies `muted`, and sends and applies a
+  presenter's sound in `mediaAction({shape, action, at, time, volume, muted})`. Its `report`,
+  `setSound` and `mediaAction` show one way to do the same in the room; the README's "Keeping media
+  in step" describes it.
+
+**What to change in the room** (`deckcraft-player.ts` has its own media layer):
+
+1. Bump `@livestorm/deckcraft-player` to the release with this change.
+2. In `buildMedia`, set both: `el.volume = clamp(c.volume ?? 1)` and `el.muted = !!c.muted`. That
+   alone fixes the dead mute button.
+3. Send a presenter's volume and mute changes (the element's `volumechange`, not the player's own
+   changes) with play and pause, and apply received ones on every viewer. Extend `MediaAction` with
+   optional `volume` and `muted`; send a change as the clip's current `play` or `pause` at its
+   current time, so players that ignore the new fields just keep in step. A volume slider drag
+   fires many `volumechange` events: send once it rests.
+4. Late joiners get the clip's sound from the latest stored action: check that Rails
+   (`RoomChannel#manage_media`, `medias_params["powerpoint"]["clips"]`) keeps `volume` and `muted`.
+5. Keep the sound-blocked flow: a browser that won't unmute a playing clip before the viewer has
+   clicked pauses it instead. Treat that as blocked sound (`resumeSound`), and don't send that pause
+   as the presenter's.
+
 ## 0.12.0: embedded fonts drawn, Line Color and Font Color animations fixed
 
 PowerPoint compresses the fonts it embeds in a deck (MicroType Express), and 0.11.0 could not read

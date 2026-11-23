@@ -45,10 +45,14 @@ pub(super) fn playback(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         let r = big_button(ui, Icon::Volume, "Volume", m.is_some());
         egui::Popup::menu(&r).show(|ui| {
-            for (l, v) in [("Low", 0.25), ("Medium", 0.5), ("High", 1.0), ("Mute", 0.0)] {
+            for (l, v) in [("Low", 0.25), ("Medium", 0.5), ("High", 1.0)] {
                 if ui.button(l).clicked() {
-                    run(app, "media.options", json!({"volume": v}));
+                    run(app, "media.options", json!({"volume": v, "mute": false}));
                 }
+            }
+            // Mute keeps the volume, so unmuting comes back to it.
+            if ui.button("Mute").clicked() {
+                run(app, "media.options", json!({"mute": true}));
             }
         });
     });

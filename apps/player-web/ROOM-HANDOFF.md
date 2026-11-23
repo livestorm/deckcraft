@@ -3,46 +3,42 @@
 What the webinar room has to do to adopt each version of `@livestorm/deckcraft-player`. The API is
 documented in the package's README and at the top of `player.js` and `worker.js`.
 
-## 0.13.0: a clip's volume and Mute kept apart, and the presenter's sound heard by everyone
+## 0.13.0: a clip's volume and Mute kept apart
 
 A customer reported that the sound button on videos did nothing until the volume slider was moved,
 and that a slide's video was locked on mute. The deck had the clip muted in PowerPoint, and 0.12.0
 read PowerPoint's Mute as volume 0, losing the clip's own volume: the native mute button then
-unmuted a clip still at volume 0. Separately, a presenter's volume and mute changes reached no one
-else, so attendees, who have no controls, could never hear a clip that started muted.
+unmuted a clip still at volume 0. Separately, a presenter's volume and mute changes reach no one
+else, so attendees, who have no controls, can never hear a clip that starts muted.
 
-**What the room sees:**
+**What changes in the package:**
 
-- `media()` clips have `muted` beside `volume`; `volume` is the deck's own, kept while muted. The
-  player sets both on each clip, so unmuting plays at the deck's volume.
-- `mediaAction` events carry `volume` (0–1) and `muted`, on every play, pause and seek. A
-  presenter's volume or mute change in a clip's controls is sent too, as a `play` or `pause` (what
-  the clip is doing then) at its current time, once the change has rested for 300 ms, so a drag of
-  the slider sends one action, not dozens. Changes the player makes itself are not sent.
-- `player.mediaAction(a)` applies `volume` and `muted` when they are there; an action without them
-  (older players) leaves the sound as it is. An older player given a new action ignores the two
-  fields and keeps the clip in step, as for a seek.
-- A browser that refuses to unmute a playing clip before the attendee has clicked in the page pauses
-  it; the player then reports `error({message: 'sound-blocked'})`, as it does when a play is refused
-  for its sound, and keeps the presenter's sound for when the clip plays again.
+- The worker's `ready` message, `{type: 'ready', info, media, openMs}`, gives each clip in `media`
+  a new `muted: boolean` beside `volume`. `volume` (0–1) is now the deck's real level, kept while
+  muted; it is no longer 0 for a muted clip. A clip PowerPoint muted without a volume has
+  `volume: 1, muted: true`.
+- `YouTubeClip` (exported from `player.js`) has a `muted` property: setting it mutes or unmutes
+  YouTube's player, now or once it is ready.
+- `player.js`'s own `DeckcraftPlayer` (not the room's) applies `muted`, and sends and applies a
+  presenter's sound in `mediaAction({shape, action, at, time, volume, muted})`. Its `report`,
+  `setSound` and `mediaAction` show one way to do the same in the room; the README's "Keeping media
+  in step" describes it.
 
-**What to change in the room:**
+**What to change in the room** (`deckcraft-player.ts` has its own media layer):
 
 1. Bump `@livestorm/deckcraft-player` to 0.13.0.
-2. Relay the two new fields: wherever the room builds, sends, stores or replays a `MediaAction
-   { shape, action, at, time }`, keep `volume` and `muted` when present, and pass the whole action
-   to `player.mediaAction(a)`. Make both fields optional in the type, so actions from players
-   before 0.13.0 still parse.
-3. Late joiners: the latest stored action per clip now carries the clip's sound. Check that Rails
-   (`RoomChannel#manage_media`, `medias_params["powerpoint"]["clips"]`) keeps `volume` and `muted`
-   rather than permitting only the old keys; if it filters them out, joiners get the deck's own
-   sound until the presenter's next action.
-4. If the room has its own copy of the media layer (a `buildMedia` in `deckcraft-player.ts`) rather
-   than the package's, apply the same there: `el.volume = clip.volume`, `el.muted = clip.muted`, and
-   the report/apply logic of `player.js` (`report`, `setSound`, `mediaAction`).
-5. Keep the sound-blocked flow: `resumeSound` should replay the stored actions (or play the clips)
-   without setting `muted` or `volume` on the elements itself. A volume change made by the room on a
-   presenter's element looks like the presenter's own and is sent to everyone.
+2. In `buildMedia`, set both: `el.volume = clamp(c.volume ?? 1)` and `el.muted = !!c.muted`. That
+   alone fixes the dead mute button.
+3. Send a presenter's volume and mute changes (the element's `volumechange`, not the player's own
+   changes) with play and pause, and apply received ones on every viewer. Extend `MediaAction` with
+   optional `volume` and `muted`; send a change as the clip's current `play` or `pause` at its
+   current time, so players that ignore the new fields just keep in step. A volume slider drag
+   fires many `volumechange` events: send once it rests.
+4. Late joiners get the clip's sound from the latest stored action: check that Rails
+   (`RoomChannel#manage_media`, `medias_params["powerpoint"]["clips"]`) keeps `volume` and `muted`.
+5. Keep the sound-blocked flow: a browser that won't unmute a playing clip before the viewer has
+   clicked pauses it instead. Treat that as blocked sound (`resumeSound`), and don't send that pause
+   as the presenter's.
 
 ## 0.12.0: embedded fonts drawn, Line Color and Font Color animations fixed
 

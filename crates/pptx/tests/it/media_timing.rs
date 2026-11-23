@@ -82,9 +82,21 @@ fn a_muted_video_without_a_volume_unmutes_at_full_volume() {
 }
 
 #[test]
+fn a_zero_volume_is_mute_and_unmutes_at_full_volume() {
+    // PowerPoint's Playback > Volume > Mute, as a customer's deck saved it: `vol="0"`, no `mute`.
+    let c = clips(|v, _| node("video", "", v, r#" vol="0""#, ""));
+    assert_eq!((c[0].volume, c[0].muted), (1.0, true));
+    let c = clips(|v, _| node("video", "", v, r#" vol="0" mute="1""#, ""));
+    assert_eq!((c[0].volume, c[0].muted), (1.0, true));
+}
+
+#[test]
 fn a_volume_alone_does_not_mute() {
     let c = clips(|v, _| node("video", "", v, r#" vol="80000""#, ""));
     assert_eq!((c[0].volume, c[0].muted), (0.8, false));
     let c = clips(|v, _| node("video", "", v, r#" vol="80000" mute="0""#, ""));
     assert_eq!((c[0].volume, c[0].muted), (0.8, false));
+    // A low volume is the author's choice, not a mute.
+    let c = clips(|v, _| node("video", "", v, r#" vol="8163""#, ""));
+    assert_eq!((c[0].volume, c[0].muted), (0.08163, false));
 }

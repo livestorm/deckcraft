@@ -637,7 +637,9 @@ fn media_options<'a>(shapes: &'a [Shape], idmap: &IdMap) -> Vec<(&'a deckcraft_m
 /// (`repeatCount="indefinite"`), Hide While Not Playing (`showWhenStopped="0"`).
 fn media_node(w: &mut W, ids: &mut Ids, m: &deckcraft_model::MediaClip, spid: u32) {
     let tag = if m.video { "p:video" } else { "p:audio" };
-    let vol = (m.volume < 1.0).then(|| (m.volume.clamp(0.0, 1.0) * 100_000.0).round() as u32);
+    // Muted is written as PowerPoint saves its Mute, `vol="0"`, plus `mute="1"`: a reader that knows
+    // only `vol` keeps it silent. The level to unmute to is not kept (PowerPoint keeps none either).
+    let vol = if m.muted { Some(0) } else { (m.volume < 1.0).then(|| (m.volume.clamp(0.0, 1.0) * 100_000.0).round() as u32) };
     w.open0(tag);
     w.open("p:cMediaNode", A::new().o("vol", vol).o("mute", m.muted.then_some("1")).o("showWhenStopped", m.hide_while_not_playing.then_some("0")));
     w.open(

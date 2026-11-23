@@ -129,17 +129,14 @@ fn volume_loop_and_hiding_survive_a_save() {
 }
 
 #[test]
-fn mute_and_volume_survive_a_save_separately() {
+fn a_muted_clip_is_saved_as_powerpoint_saves_mute() {
     let (q, xml) = round_trip(|m| {
         m.volume = 0.8;
         m.muted = true;
     });
-    assert_eq!((music(&q).volume, music(&q).muted), (0.8, true), "{xml}");
-    assert!(xml.contains(r#"<p:cMediaNode vol="80000" mute="1">"#), "{xml}");
-    // Muted at full volume: PowerPoint's default volume is left out.
-    let (q, xml) = round_trip(|m| m.muted = true);
+    // Silent to a reader that knows only `vol`; opened again, it unmutes at full volume.
+    assert!(xml.contains(r#"<p:cMediaNode vol="0" mute="1">"#), "{xml}");
     assert_eq!((music(&q).volume, music(&q).muted), (1.0, true), "{xml}");
-    assert!(xml.contains(r#"<p:cMediaNode mute="1">"#), "{xml}");
 }
 
 #[test]

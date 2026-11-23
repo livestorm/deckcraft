@@ -119,7 +119,7 @@ the round trip even though DeckCraft doesn't model it.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-23 | trivial | Audio / video: Mute (`p:cMediaNode mute`) read and written apart from the volume; it used to be read as volume 0 |
+| 2026-11-23 | trivial | Audio / video: Mute read as its own setting, from `mute="1"` or PowerPoint's `vol="0"`, and unmuted at the clip's volume (full for `vol="0"`); written as `vol="0" mute="1"` |
 | 2026-11-17 | minor | MicroType Express embedded fonts are drawn, including CFF-flavoured OpenType faces (stored as they are, with no glyphs to translate) |
 | 2026-11-03 | trivial | Reuse Slides transfers referenced custom table styles from native and PPTX sources; grouped tables, undo, native save/reopen and style-id conflicts are covered |
 | 2026-11-02 | minor | Optional table RTL direction is read and written as `a:tblPr/@rtl`; native and two PPTX saves preserve true, false and absent values with distinguishable column text |

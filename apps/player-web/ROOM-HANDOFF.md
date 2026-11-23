@@ -6,17 +6,20 @@ documented in the package's README and at the top of `player.js` and `worker.js`
 ## 0.13.0: a clip's volume and Mute kept apart
 
 A customer reported that the sound button on videos did nothing until the volume slider was moved,
-and that a slide's video was locked on mute. The deck had the clip muted in PowerPoint, and 0.12.0
-read PowerPoint's Mute as volume 0, losing the clip's own volume: the native mute button then
-unmuted a clip still at volume 0. Separately, a presenter's volume and mute changes reach no one
+and that a slide's video was locked on mute. The deck's video was muted in PowerPoint, which saved
+it as volume 0 (`vol="0"`). 0.12.0 gave the room that volume of 0 (and read the `mute` attribute
+as 0 too), so the native mute button unmuted a clip still at volume 0. Separately, a presenter's volume and mute changes reach no one
 else, so attendees, who have no controls, can never hear a clip that starts muted.
 
 **What changes in the package:**
 
 - The worker's `ready` message, `{type: 'ready', info, media, openMs}`, gives each clip in `media`
   a new `muted: boolean` beside `volume`. `volume` (0–1) is now the deck's real level, kept while
-  muted; it is no longer 0 for a muted clip. A clip PowerPoint muted without a volume has
-  `volume: 1, muted: true`.
+  muted. The rule: `muted` is true when the deck says `mute="1"` or its volume is 0 (how PowerPoint
+  saves Mute); a muted clip whose deck volume is 0 or absent gets `volume: 1`; any other volume, low
+  ones included (0.08 is the author's choice), is passed as it is, unmuted. `volume` is never 0.
+- The same rule for the current 0.12.0 player, which has no `muted`: treat `volume === 0` as
+  `muted: true, volume: 1`.
 - `YouTubeClip` (exported from `player.js`) has a `muted` property: setting it mutes or unmutes
   YouTube's player, now or once it is ready.
 - `player.js`'s own `DeckcraftPlayer` (not the room's) applies `muted`, and sends and applies a

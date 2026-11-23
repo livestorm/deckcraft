@@ -157,9 +157,20 @@ notes}]}` or `{type: 'notesError', message}`.
 ## Keeping media in step
 
 With `controls`, a presenter's play, pause or seek in a clip's controls is sent as
-`mediaAction({shape, action, at, time})`: the clip plays or pauses `at` seconds in, as of `time` on
-the player's `clock`. Pass each one to `player.mediaAction(a)` on every client, the presenter's
-included, and keep the latest one per clip to give someone who joins:
+`mediaAction({shape, slide, action, at, time, trigger})`: the clip plays or pauses `at` seconds in,
+as of `time` on the player's `clock`. `trigger` is `controls` (a play or pause in the controls),
+`seek` (a seek in them) or `ended` (the clip on the slide shown got to its end by itself, which
+every client sees at once). Pass each one to `player.mediaAction(a)` on every client, the
+presenter's included, and keep the latest one per clip to give someone who joins.
+
+**A media action never moves the deck.** Send it with the clip's state only, not with the sending
+presenter's slide and step: with two presenters, one may already be on the next slide when the
+other's clip ends. `slide` is the clip's slide, so a room can also drop an action for a slide other
+than its own. The player's own plays, pauses and seeks (media effects on the timeline, trims,
+loops, keeping in step) are never sent, since every client does them itself, and a clip on a slide
+no longer shown sends nothing.
+
+What the player does with them:
 
 - a playing clip starts where it has got to since `time`, so a late message or a newcomer lands
   where everyone else is (a looping clip goes round its loop; one that would have ended stays put);
@@ -231,7 +242,8 @@ A YouTube video inserted in PowerPoint (Insert > Video > Online Video) plays in 
 player over the slide, in privacy-enhanced mode (`www.youtube-nocookie.com`). It follows the deck's
 media effects and `mediaAction` like any clip: with `controls`, YouTube's controls report plays,
 pauses and seeks as `mediaAction`, and everyone else's player follows. (A seek is sent as the clip's
-`play` or `pause` at its new time, for any clip, so players before 0.4.1 follow it too.) A start or
+`play` or `pause` at its new time, with `trigger: 'seek'`, for any clip, so players before 0.4.1
+follow it too.) A start or
 end time in the link
 (`?start=`, `?t=1m30s`, `?end=`) bounds the clip.
 

@@ -500,7 +500,10 @@ test('a presenter\'s seek is sent with where the clip is and whether it plays', 
   el.paused = true
   el.currentTime = 3
   el.fire('seeked')
-  assert.deepEqual(sent, [{ shape: 7, action: 'play', at: 42, time: 1000 }, { shape: 7, action: 'pause', at: 3, time: 1000 }])
+  assert.deepEqual(sent, [
+    { shape: 7, slide: 0, action: 'play', at: 42, time: 1000, trigger: 'seek' },
+    { shape: 7, slide: 0, action: 'pause', at: 3, time: 1000, trigger: 'seek' }
+  ])
 })
 
 test('the player\'s own seeks are not sent: media actions, cues, and a video starting over', () => {
@@ -521,14 +524,87 @@ test('the player\'s own seeks are not sent: media actions, cues, and a video sta
   el.paused = false
   el.currentTime = 60
   el.fire('seeked')
-  assert.deepEqual(sent, [{ shape: 7, action: 'play', at: 60, time: 1000 }])
+  assert.deepEqual(sent, [{ shape: 7, slide: 0, action: 'play', at: 60, time: 1000, trigger: 'seek' }])
 })
 
 test('a presenter\'s play and pause carry the time on the shared clock', () => {
   const { el, sent } = presenterWithClip()
   el.currentTime = 4
   el.fire('play')
-  assert.deepEqual(sent, [{ shape: 7, action: 'play', at: 4, time: 1000 }])
+  el.currentTime = 9
+  el.fire('pause')
+  assert.deepEqual(sent, [
+    { shape: 7, slide: 0, action: 'play', at: 4, time: 1000, trigger: 'controls' },
+    { shape: 7, slide: 0, action: 'pause', at: 9, time: 1000, trigger: 'controls' }
+  ])
+})
+
+test('a clip reaching its end is sent as ended, not as a presenter\'s pause', () => {
+  const { el, sent } = presenterWithClip()
+  el.paused = false
+  el.currentTime = 60
+  el.ended = true
+  el.paused = true
+  el.fire('pause') // a media element pauses itself at its end, then fires ended
+  el.fire('ended')
+  assert.deepEqual(sent, [{ shape: 7, slide: 0, action: 'pause', at: 60, time: 1000, trigger: 'ended' }])
+})
+
+test('a clip on a slide no longer shown sends nothing', () => {
+  const { p, el, sent } = presenterWithClip()
+  p.position = [1, 0] // this presenter has moved on; the clip was on slide 0
+  el.paused = false
+  el.fire('play')
+  el.paused = true
+  el.fire('pause')
+  el.currentTime = 30
+  el.fire('seeked')
+  assert.deepEqual(sent, [])
+})
+
+test('the player\'s own seek whose seeked comes seconds late, the clip playing on, is not sent', () => {
+  const { p, el, sent } = presenterWithClip()
+  const now = { ms: 0 }
+  p.now = () => now.ms
+  el.paused = false
+  p.mediaAction({ shape: 7, action: 'play', at: 10, time: 1000 }) // another presenter's play: a jump to 10
+  assert.equal(el.currentTime, 10)
+  now.ms = 5000
+  el.currentTime = 14.8 // the seek finished late, and the clip has played on since
+  el.fire('seeked')
+  assert.deepEqual(sent, [])
+  el.currentTime = 50 // then a presenter's own seek
+  el.fire('seeked')
+  assert.deepEqual(sent, [{ shape: 7, slide: 0, action: 'play', at: 50, time: 1000, trigger: 'seek' }])
+})
+
+test('a presenter\'s seek elsewhere while the player\'s own is pending is sent; a stale own seek is forgotten', () => {
+  const { p, el, sent } = presenterWithClip()
+  const now = { ms: 0 }
+  p.now = () => now.ms
+  p.mediaAction({ shape: 7, action: 'pause', at: 10, time: 1000 })
+  el.currentTime = 40
+  el.fire('seeked')
+  p.mediaAction({ shape: 7, action: 'pause', at: 20, time: 1000 })
+  now.ms = 20000 // its seeked never came
+  el.fire('seeked') // a presenter's seek to where the old one went
+  assert.deepEqual(sent.map(a => [a.at, a.trigger]), [[40, 'seek'], [20, 'seek']])
+})
+
+test('a YouTube video at its end says so until played or sought again', async () => {
+  const { yt, clip } = await readyClip()
+  clip.play()
+  yt.fire('onStateChange', S.PLAYING)
+  assert.equal(clip.ended, false)
+  yt.fire('onStateChange', S.ENDED)
+  assert.equal(clip.ended, true)
+  assert.equal(clip.paused, true)
+  clip.currentTime = 0
+  assert.equal(clip.ended, false)
+  yt.fire('onStateChange', S.ENDED)
+  clip.play()
+  assert.equal(clip.ended, false)
+  clip.destroy()
 })
 
 // A viewer's player with one clip on the slide shown, and a shared clock the test sets, in ms.

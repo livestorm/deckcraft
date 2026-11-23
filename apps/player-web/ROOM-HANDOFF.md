@@ -3,7 +3,7 @@
 What the webinar room has to do to adopt each version of `@livestorm/deckcraft-player`. The API is
 documented in the package's README and at the top of `player.js` and `worker.js`.
 
-## 0.13.0: media actions say what made them, and only the slide shown sends them
+## Next version (unreleased): media actions say what made them, and only the slide shown sends them
 
 A customer's webinar with two presenters (the organiser and a speaker) had slides with videos
 switch between slides 3 and 4 on their own. Each presenter's player sends `mediaAction`, and the

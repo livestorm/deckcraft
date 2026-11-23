@@ -188,7 +188,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Playback",
             ["Playback"],
             None,
-            "{autoplay?, loop?, rewind?, acrossSlides?, hide?, fullScreen?, volume?: 0..1, trimStart?: ms, trimEnd?: ms, fadeIn?: ms, fadeOut?: ms, ids?}",
+            "{autoplay?, loop?, rewind?, acrossSlides?, hide?, fullScreen?, volume?: 0..1, mute?, trimStart?: ms, trimEnd?: ms, fadeIn?: ms, fadeOut?: ms, ids?}",
             has_selection,
             media_options
         ),

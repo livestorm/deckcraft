@@ -112,7 +112,7 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
         "probe": probe,
         "options": {
             "autoplay": m.autoplay, "loop": m.loop_play, "rewind": m.rewind, "acrossSlides": m.play_across_slides,
-            "hide": m.hide_while_not_playing, "fullScreen": m.full_screen, "volume": m.volume,
+            "hide": m.hide_while_not_playing, "fullScreen": m.full_screen, "volume": m.volume, "mute": m.muted,
             "trimStart": m.trim_start_ms, "trimEnd": m.trim_end_ms, "fadeIn": m.fade_in_ms, "fadeOut": m.fade_out_ms,
         },
         "status": s.media_status.get(&id),

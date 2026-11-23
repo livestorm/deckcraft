@@ -221,10 +221,16 @@ impl MediaHost {
         let media_key = Arc::as_ptr(&bytes) as usize;
         let duration = if clip.duration_ms > 0 { clip.duration_ms as f64 / 1000.0 } else { self.duration_of(&bytes) };
         let spec = VoiceSpec {
-            clip: ClipParams::from_ms(clip.trim_start_ms, clip.trim_end_ms, clip.fade_in_ms, clip.fade_out_ms, clip.volume),
+            clip: ClipParams::from_ms(
+                clip.trim_start_ms,
+                clip.trim_end_ms,
+                clip.fade_in_ms,
+                clip.fade_out_ms,
+                if clip.muted { 0.0 } else { clip.volume },
+            ),
             looping: clip.loop_play,
             duration,
-            audio: clip.volume > 0.0,
+            audio: clip.volume > 0.0 && !clip.muted,
         };
         let source_changed = self.owners.get(&id).is_some_and(|o| o.source != media_key);
         if clip.video && (source_changed || !self.videos.contains_key(&id)) {

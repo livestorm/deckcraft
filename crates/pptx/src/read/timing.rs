@@ -218,8 +218,10 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
         if let Some(v) = cm.attr("vol").and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite()) {
             clip.volume = (v / 100_000.0).clamp(0.0, 1.0);
         }
+        // Mute is separate from the volume (ECMA-376 `CT_TLCommonMediaNodeData`, `vol` defaults to 100%): unmuting
+        // brings back the volume the author set.
         if cm.bool("mute") == Some(true) {
-            clip.volume = 0.0;
+            clip.muted = true;
         }
         if cm.bool("showWhenStopped") == Some(false) {
             clip.hide_while_not_playing = true;

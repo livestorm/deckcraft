@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-17 · **Change:** trivial (embedded MicroType Express fonts drawn, including CFF-flavoured OpenType faces; the gap is closed; previous: trivial, workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-23 · **Change:** trivial (#74 entry: Mute round-trips apart from the volume; previous: trivial, embedded MicroType Express fonts drawn, including CFF-flavoured OpenType faces; the gap is closed; previous: trivial, workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -99,7 +99,7 @@ Detail in [file-format-parity.md](file-format-parity.md).
 ### Round trip loses media playback options (#74)
 - **Evidence:** issue #74 (filed 2026-10-10 by an automated reviewer) is open: media playback options aren't written back. Animation rewind (#77) is fixed (PR #83 merged). Comment threads left with #70: the writer now emits
   the `p188` modern part next to the legacy one.
-- **This fork:** a clip's volume, Loop until Stopped and Hide While Not Playing (`p:cMediaNode`) are
+- **This fork:** a clip's volume, Mute, Loop until Stopped and Hide While Not Playing (`p:cMediaNode`) are
   read and written (`crates/pptx/tests/media_playback.rs`); Play Across Slides, Rewind after Playing
   and full-screen video are still not written back.
 - **Impact:** a deck opened and saved silently loses show behaviour.
@@ -365,6 +365,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-23 | trivial | #74 entry: Mute round-trips apart from the volume; estimate unchanged |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |

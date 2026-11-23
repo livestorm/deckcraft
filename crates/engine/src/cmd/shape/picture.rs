@@ -95,6 +95,9 @@ pub(super) fn media_options(s: &mut Session, p: &Value) -> Result<Value> {
             if let Some(v) = f64_param(p, "volume") {
                 m.volume = v.clamp(0.0, 1.0);
             }
+            if let Some(v) = bool_param(p, "mute") {
+                m.muted = v;
+            }
             let ms = |k: &str| p.get(k).and_then(Value::as_u64).map(|v| v.min(u32::MAX as u64) as u32);
             if let Some(v) = ms("trimStart") {
                 m.trim_start_ms = v;

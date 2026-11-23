@@ -605,9 +605,9 @@ pub fn has_timing(anims: &[Animation], shapes: &[Shape]) -> bool {
     !anims.is_empty() || options(shapes, 0)
 }
 
-/// Volume, Loop until Stopped or Hide While Not Playing set: PowerPoint keeps them in the timing.
+/// Volume, Mute, Loop until Stopped or Hide While Not Playing set: PowerPoint keeps them in the timing.
 fn has_options(m: &deckcraft_model::MediaClip) -> bool {
-    m.volume < 1.0 || m.loop_play || m.hide_while_not_playing
+    m.volume < 1.0 || m.muted || m.loop_play || m.hide_while_not_playing
 }
 
 /// The clips with playback options, with their file ids, in document order.
@@ -633,13 +633,13 @@ fn media_options<'a>(shapes: &'a [Shape], idmap: &IdMap) -> Vec<(&'a deckcraft_m
     out
 }
 
-/// `p:audio` / `p:video` with its `p:cMediaNode`: volume (100000 = 100%), Loop until Stopped
+/// `p:audio` / `p:video` with its `p:cMediaNode`: volume (100000 = 100%), Mute, Loop until Stopped
 /// (`repeatCount="indefinite"`), Hide While Not Playing (`showWhenStopped="0"`).
 fn media_node(w: &mut W, ids: &mut Ids, m: &deckcraft_model::MediaClip, spid: u32) {
     let tag = if m.video { "p:video" } else { "p:audio" };
     let vol = (m.volume < 1.0).then(|| (m.volume.clamp(0.0, 1.0) * 100_000.0).round() as u32);
     w.open0(tag);
-    w.open("p:cMediaNode", A::new().o("vol", vol).o("showWhenStopped", m.hide_while_not_playing.then_some("0")));
+    w.open("p:cMediaNode", A::new().o("vol", vol).o("mute", m.muted.then_some("1")).o("showWhenStopped", m.hide_while_not_playing.then_some("0")));
     w.open(
         "p:cTn",
         A::new()

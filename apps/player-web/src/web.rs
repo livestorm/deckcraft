@@ -184,7 +184,8 @@ impl WebPlayer {
     }
 
     /// `[{slide, shape, video, contentType, data: Uint8Array, link?, rect: [x, y, w, h],
-    /// volume, trimStartMs, trimEndMs}]`, rects as fractions of the slide.
+    /// volume, muted, loop, trimStartMs, trimEndMs}]`, rects as fractions of the slide. `volume` is
+    /// kept while `muted`: unmuting plays at it.
     pub fn media(&self) -> Result<JsValue, JsValue> {
         let out = Array::new();
         for m in self.inner.media() {
@@ -200,6 +201,7 @@ impl WebPlayer {
             let rect: Array = m.rect.iter().map(|v| JsValue::from_f64(*v)).collect();
             set(&o, "rect", rect)?;
             set(&o, "volume", m.volume)?;
+            set(&o, "muted", m.muted)?;
             set(&o, "loop", m.loop_play)?;
             set(&o, "trimStartMs", m.trim_start_ms)?;
             set(&o, "trimEndMs", m.trim_end_ms)?;

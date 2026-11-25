@@ -115,11 +115,11 @@ player.on('error', e => { if (e.message === 'image-unavailable') console.warn(e.
   256 MB cap is on what is held at once, not on the deck. A released picture is fetched again when
   its window comes back; stepping back and forth one slide never fetches one again. A picture that
   timed out, lost its connection or got a 5xx answer is fetched again when a later move brings its
-  window back (never in the move it failed in), at most twice more, then given up. One refused for
-  the 256 MB cap, which takes a window of more than 256 MB, is tried again on every later move. Any
-  other failure (a 4xx status, too large, undecodable) is not tried again. At
-  most 4 fetches at once, 20 s each, 32 MB per picture, 256 MB held at once and 512 pictures per
-  deck.
+  window back (never in the move it failed in), at most twice more in a row, then given up; one
+  that loads starts afresh. One refused for the 256 MB cap, which takes a window of more than
+  256 MB, is tried again on every later move. Any other failure (a 4xx status, too large,
+  undecodable) is not tried again. At most 4 fetches at once, 20 s each, 32 MB per picture, 256 MB
+  held at once and 512 pictures per deck.
 - A picture that can't be fetched, or whose bytes aren't a picture this player draws, gives `error`
   with `{message: 'image-unavailable', url, slide, reason, fatal: false, code, status, file, media,
   slides, onScreen, retry, ms}`, once per failed attempt; the deck plays on and it never fails

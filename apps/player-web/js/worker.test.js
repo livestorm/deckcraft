@@ -810,3 +810,16 @@ test('retries keep to the fetch limit', async () => {
   assert.equal(server.asked.length, 8 * (1 + MAX_IMAGE_RETRIES))
   assert.equal(server.most(), 2)
 })
+
+test('a picture that loaded after a retry gets its full retries again if it later fails', async () => {
+  // a.png on slide 0: times out, loads on the retry, is released on the way to slide 10 and fails
+  // again with a 503 when its window comes back. That new failure gets its own two retries.
+  const all = [image(1, 'a.png', [0])]
+  const player = deck(all)
+  const server = flaky((file, n) => (n === 2 ? 200 : 503))
+  const posted = []
+  const show = await open(player, server, { posted })
+  for (const s of [1, 10, 0, 1, 0, 1, 0]) await show(s)
+  assert.deepEqual(errors(posted).map(e => [e.status, e.retry]), [[503, true], [503, true], [503, true], [503, false]])
+  assert.equal(count(server, 'a.png'), 5, 'one load, then three more requests after it was released')
+})

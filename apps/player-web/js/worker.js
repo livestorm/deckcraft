@@ -539,10 +539,11 @@ function showImages () {
 //   as bytes arrive and given back as pictures are released, dropped or refused.
 // - A picture that failed for want of an answer (`imageCode` 'timeout' or 'network') or with a
 //   5xx status is tried again when a later move brings its window, at most MAX_IMAGE_RETRIES more
-//   times, then given up; never within the move it failed in, and always through the same queue and
-//   its `limit`, so a failing CDN is asked at most 1 + MAX_IMAGE_RETRIES times per picture. One
-//   refused for the budget is tried again on every later move, as before. Any other failure (a 4xx
-//   status, too large, undecodable) is never tried again.
+//   times since it last loaded, then given up; never within the move it failed in, and always
+//   through the same queue and its `limit`, so a failing CDN is asked at most 1 +
+//   MAX_IMAGE_RETRIES times per picture in a row. One refused for the budget is tried again on
+//   every later move, as before. Any other failure (a 4xx status, too large, undecodable) is
+//   never tried again.
 // - At most `limit` fetches run at once, from one queue for the deck. A move puts the new window's
 //   pictures at the front, the slide on screen's first, and drops the old window's that haven't
 //   started (a later window may still ask for them); fetches already running finish, and their
@@ -588,6 +589,9 @@ async function openImages ({ deck, base, credentials, post, current, schedule, o
         throw new Error(String(err && err.message ? err.message : err))
       }
       held.set(media, buf.byteLength)
+      // A picture that loads starts afresh: a later failure gets every retry again.
+      tries.delete(media)
+      retryAt.delete(media)
     },
     failed: f => {
       let retry = f.code === 'deck-budget'

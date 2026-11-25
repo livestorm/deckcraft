@@ -77,7 +77,8 @@ fetched again for the rest of the webinar: a box with a cross on its slide until
   machine, can.
 - A picture that failed with `'timeout'`, `'network'` or a 5xx status is fetched again when a later
   move brings its window back, never in the move it failed in, at most twice more (three requests
-  in all), through the same queue of at most 4 fetches. A 4xx, `'too-large'` and `'undecodable'`
+  in a row), through the same queue of at most 4 fetches. A picture that loads starts afresh: if it
+  fails again later, it gets two more retries. A 4xx, `'too-large'` and `'undecodable'`
   are never retried; `'deck-budget'` is tried again on every later move, as before. A failure is
   reported each time, so one picture can give up to three events, the last with `retry: false`.
 

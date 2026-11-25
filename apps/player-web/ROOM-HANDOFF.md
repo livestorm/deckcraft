@@ -45,6 +45,51 @@ else, so attendees, who have no controls, can never hear a clip that starts mute
    clicked pauses it instead. Treat that as blocked sound (`resumeSound`), and don't send that pause
    as the presenter's.
 
+## Unreleased: media actions say what made them, and only the slide shown sends them
+
+Draft for the next release (merged into its section when the version is set).
+
+A customer's webinar with two presenters (the organiser and a speaker) had slides with videos
+switch between slides 3 and 4 on their own. Each presenter's player sends `mediaAction`, and the
+room sends each one as an update with **that presenter's** slide and step. Some of those actions
+were not a presenter's doing:
+
+- **A clip reaching its end.** The browser pauses a clip at its end (a `pause` event, then
+  `ended`), and the player sent that pause like a presenter's. Both presenters' clips end at about
+  the same moment; if one has just moved to slide 4, the other's end still says slide 3, and the
+  room goes back.
+- **The player's own seek, seconds late.** The player keeps clips in step by seeking them, and
+  rewinds them for media effects and loops. It recognised the `seeked` of its own seek for 3 s
+  only, and only at the exact time. A large video seeking on a slow network answers later, or after
+  playing on, and was sent as a presenter's seek.
+
+Now:
+
+- Each `mediaAction` carries `trigger`: `controls` (a play, pause, volume or mute change in the
+  clip's controls), `seek` (a seek in them) or `ended` (the clip got to its end by itself), and
+  `slide`, the clip's slide. `shape`, `action`, `at`, `time`, `volume` and `muted` are as before.
+- A clip's end is sent with `trigger: 'ended'`, still as a pause at the end, so someone who joins
+  later sees it stopped there.
+- The player's own seek is recognised for 15 s, by where it went.
+- `player.mediaAction(a)` applies an action with `slide` only to that slide's clip: shape ids are
+  unique only within a slide.
+- A clip on a slide no longer shown sends nothing. Its controls are hidden, so nothing it does
+  there is a presenter's.
+- Media effects, trims, loops and keeping in step were never sent, and still aren't.
+
+**What the room must change.** A media action must not move the deck:
+
+- Send it with the clip's state only: no slide and step, or fields the server applies without
+  changing the room's slide and step. Only Next, Back, the keyboard, a link to a slide and a jump
+  move the deck.
+- Keep storing the latest action per clip (`medias_params["powerpoint"]["clips"]`) for people who
+  join. `ended` is stored like the others.
+- Optionally, drop an action whose `slide` isn't the room's current slide.
+
+Without the room change, this version stops the late-seek and off-slide sends, but a clip's end
+still reaches the room as a pause from both presenters, and the room still moves to the sender's
+position. Ship both together.
+
 ## Unreleased: why a linked picture is missing, and retries for passing failures
 
 Draft for the next release (merged into its section when the version is set).

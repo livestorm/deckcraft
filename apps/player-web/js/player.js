@@ -27,12 +27,18 @@
 // error({message: 'image-unavailable', url, slide, reason, fatal: false, code, status, file, media,
 // slides, onScreen, retry, ms}) (see worker.js); the deck plays on, and
 // its box draws as an empty picture, as any picture whose bytes can't be read does,
-// mediaAction({shape, action, at, time, volume, muted}) when someone with controls plays, pauses,
-// seeks or changes the volume or mute of a clip themselves; `time` is when, on `clock`, and
-// `volume` (0-1) and `muted` are the clip's sound then. Pass every media action to p.mediaAction(a)
-// on every client, and hand the latest one per clip to someone joining: playing clips keep to it,
-// and everyone hears the clip as its presenter set it. A clip starts with the deck's own volume and
-// Mute. Actions without `volume` or `muted` (older players) leave the sound as it is.
+// mediaAction({shape, slide, action, at, time, volume, muted, trigger}) when someone with controls
+// plays, pauses, seeks or changes the volume or mute of a clip themselves, or a clip on the slide
+// shown reaches its end; `time` is when, on `clock`, and `volume` (0-1) and `muted` are the clip's
+// sound then. `trigger` says which: 'controls' (play, pause, volume or mute in the clip's controls),
+// 'seek' (a seek in them) or 'ended' (the clip got to its end by itself, on every client at once).
+// Only 'controls' and 'seek' are a presenter's doing. None of them moves the deck: send each with the
+// clip's state only, never with this viewer's position, since another presenter may have moved on.
+// The player's own plays, pauses and seeks (timeline cues, trims, loops, keeping in step) are never
+// sent: every client does them itself. Pass every media action to p.mediaAction(a) on every client,
+// and hand the latest one per clip to someone joining: playing clips keep to it, and everyone hears
+// the clip as its presenter set it. A clip starts with the deck's own volume and Mute. Actions
+// without `volume` or `muted` (older players) leave the sound as it is.
 // `clock` gives the time in ms that all clients share, best the server's: Date.now by default.
 // A YouTube video (PowerPoint's online video) plays in YouTube's player, in privacy-enhanced mode;
 // one that can't play gives error({message: 'video-unavailable', fatal: false}).
@@ -133,9 +139,12 @@ export function loadYouTubeApi (win = globalThis, timeoutMs = 15000) {
   return loading
 }
 
+// How long the player waits for the seeked event of a seek it made itself.
+const OWN_SEEK_MS = 15000
+
 // A YouTube video with the part of a media element's interface the player uses: play() and
-// pause(), paused, currentTime, duration, volume, muted, loop, and the play, pause, timeupdate, seeked and
-// ended events (plus error). seeked is fired for a seek in YouTube's own controls only. Its player is made the first time it's shown (mount). `api` gives the
+// pause(), paused, ended, currentTime, duration, volume, muted, loop, and the play, pause,
+// timeupdate, seeked and ended events (plus error). seeked is fired for a seek in YouTube's own controls only. Its player is made the first time it's shown (mount). `api` gives the
 // YouTube IFrame API; `box` is the element it's drawn in.
 export class YouTubeClip extends EventTarget {
   constructor ({ id, box, api, endMs = 0, now = () => performance.now() }) {
@@ -153,6 +162,7 @@ export class YouTubeClip extends EventTarget {
     this.mounted = false
     this.destroyed = false
     this.paused_ = true
+    this.ended_ = false
     this.volume_ = 1
     this.muted_ = false
     this.seek = null
@@ -166,11 +176,15 @@ export class YouTubeClip extends EventTarget {
 
   get paused () { return this.paused_ }
 
+  // Stopped at its end, as a media element's `ended`: until it is played or sought again.
+  get ended () { return this.ended_ }
+
   get currentTime () { return this.player ? (this.startAt ?? this.player.getCurrentTime()) : (this.seek ?? 0) }
 
   // YouTube plays a video that hasn't started, or has ended, when asked to seek it, and drops a
   // play sent while a cue loads: a paused one keeps the time, and seeks there when it plays.
   set currentTime (t) {
+    this.ended_ = false
     if (!this.player) {
       this.seek = t
     } else if (this.paused_ && [this.states.UNSTARTED, this.states.ENDED, this.states.CUED].includes(this.state)) {
@@ -243,6 +257,7 @@ export class YouTubeClip extends EventTarget {
     if (this.failed) return Promise.reject(mediaError('NotSupportedError', 'video-unavailable'))
     if (this.paused_) {
       this.paused_ = false
+      this.ended_ = false
       this.fire('play')
       if (this.player && this.startAt !== null) {
         this.player.seekTo(this.startAt, true)
@@ -266,6 +281,7 @@ export class YouTubeClip extends EventTarget {
     this.state = state
     if (state === S.PLAYING || state === S.PAUSED) this.startAt = null
     if (state === S.PLAYING) {
+      this.ended_ = false // played again, perhaps from YouTube's own controls
       for (const w of this.waiting.splice(0)) w.resolve()
       if (this.paused_) {
         this.paused_ = false
@@ -274,14 +290,14 @@ export class YouTubeClip extends EventTarget {
     } else if (state === S.PAUSED && !this.paused_) {
       this.paused_ = true
       this.fire('pause')
-    } else if (state === S.ENDED) this.ended()
+    } else if (state === S.ENDED) this.finish()
   }
 
   tick () {
     this.watchSeek()
     if (this.paused_) return
     this.fire('timeupdate')
-    if (this.end > 0 && this.currentTime >= this.end) this.ended()
+    if (this.end > 0 && this.currentTime >= this.end) this.finish()
   }
 
   // YouTube reports no seeks: one in its controls is a jump further than playing could move it.
@@ -293,16 +309,20 @@ export class YouTubeClip extends EventTarget {
     this.last = [S.PLAYING, S.PAUSED, S.BUFFERING].includes(this.state) ? { t, at } : null
     if (!last || !this.last) return
     const most = (at - last.at) / 1000 * (this.player.getPlaybackRate?.() || 1)
-    if (t < last.t - 0.5 || t > last.t + most + 1) this.fire('seeked')
+    if (t < last.t - 0.5 || t > last.t + most + 1) {
+      this.ended_ = false
+      this.fire('seeked')
+    }
   }
 
-  ended () {
+  finish () {
     if (this.loop) {
       this.player.seekTo(0, true)
       this.last = null
       this.player.playVideo()
       return
     }
+    this.ended_ = true
     if (!this.paused_) {
       this.paused_ = true
       this.player.pauseVideo()
@@ -720,15 +740,18 @@ export class DeckcraftPlayer {
     })
   }
 
-  // A presenter's own plays, pauses, seeks and sound changes, for everyone else to follow: not the
-  // player's own. A seek or a change of volume or mute is sent as what the clip is doing (play or
-  // pause) at its time then, so older players just keep to it. Each action carries the sound.
+  // A presenter's own plays, pauses, seeks and sound changes, for everyone else to follow, and a clip
+  // reaching its end: not the player's own. A seek or a change of volume or mute is sent as what the
+  // clip is doing (play or pause) at its time then, so older players just keep to it. Each action
+  // carries the sound. A clip on a slide no longer shown sends nothing: its controls are hidden, so
+  // whatever it does there is not a presenter's.
   report (clip) {
-    const { el, shape } = clip
-    const send = action => {
+    const { el, shape, slide } = clip
+    const send = (action, trigger) => {
       clip.anchor = { action, at: el.currentTime, time: this.clock() }
       clip.sound = soundOf(el)
-      this.emit('mediaAction', { shape, ...clip.anchor, ...clip.sound })
+      if (slide !== this.position?.[0]) return
+      this.emit('mediaAction', { shape, slide, ...clip.anchor, ...clip.sound, trigger })
     }
     // A drag of the volume slider fires many changes: the sound is sent once it has rested for
     // `soundDelay` ms. A YouTube video's own controls report no volume changes.
@@ -736,27 +759,42 @@ export class DeckcraftPlayer {
       clearTimeout(clip.soundTimer)
       if (sameSound(clip.sound, el)) return
       clip.soundTimer = setTimeout(() => {
-        if (!sameSound(clip.sound, el)) send(el.paused ? 'pause' : 'play')
+        if (!sameSound(clip.sound, el)) send(el.paused ? 'pause' : 'play', 'controls')
       }, this.soundDelay ?? 300)
     })
     for (const action of ['play', 'pause']) {
       el.addEventListener(action, () => {
         if (clip.quiet > 0) clip.quiet -= 1
-        else send(action)
+        // Reaching its end pauses a clip, with a pause event before `ended`.
+        else send(action, action === 'pause' && el.ended ? 'ended' : 'controls')
       })
     }
     el.addEventListener('seeked', () => {
-      const own = clip.ownSeek
-      if (own && performance.now() < own.until && Math.abs(el.currentTime - own.t) < 0.25) return
+      if (this.ownSeeked(clip)) return
       if (el.loop && el.currentTime < 0.25) return // a video starting over by itself
-      send(el.paused ? 'pause' : 'play')
+      send(el.paused ? 'pause' : 'play', 'seek')
     })
   }
 
-  // A seek the player makes itself. Its seeked event can come late, or never (a clip not loaded
-  // yet), so it is recognised by its time for a few seconds rather than counted.
+  // Is this seeked the player's own seek? Each seek gives one seeked, the latest's, and it can come
+  // seconds late (a large video still loading), so it is waited for up to OWN_SEEK_MS. The clip
+  // doesn't play on while seeking, so seeked finds it where the seek went: a seeked anywhere else
+  // is a presenter's seek that replaced the player's. A seek that never gives one (a clip not
+  // loaded yet) is forgotten after OWN_SEEK_MS.
+  ownSeeked (clip) {
+    const own = clip.ownSeek
+    if (!own) return false
+    clip.ownSeek = null
+    if (!(this.now() - own.started < OWN_SEEK_MS)) return false
+    return Math.abs(clip.el.currentTime - own.t) < 0.25
+  }
+
+  now () { return performance.now() }
+
+  // A seek the player makes itself; ownSeeked recognises its seeked event. A YouTube video's own
+  // seeks fire none.
   seek (m, t) {
-    m.ownSeek = { t, until: performance.now() + 3000 }
+    m.ownSeek = m.el instanceof YouTubeClip ? null : { t, started: this.now() }
     m.jumped = this.clock()
     m.el.currentTime = t
     if ('playbackRate' in m.el) m.el.playbackRate = 1
@@ -808,7 +846,10 @@ export class DeckcraftPlayer {
   // A clip played or paused by the presenter, `at` seconds in at `time`: every client does the
   // same, and a playing clip starts where it has got to since. Without a time (players before
   // 0.5.0), it starts at `at` and isn't kept in step.
-  mediaAction ({ shape, action, at, time, volume, muted }) {
+  // An action that names its slide is for that slide's clip only: shape ids are unique only within a
+  // slide, so on another slide the same id can be an unrelated clip.
+  mediaAction ({ shape, slide, action, at, time, volume, muted }) {
+    if (slide != null && slide !== this.position?.[0]) return
     const m = this.clip(shape)
     if (!m) return
     this.setSound(m, volume, muted)

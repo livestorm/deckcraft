@@ -156,21 +156,32 @@ notes}]}` or `{type: 'notesError', message}`.
 
 ## Keeping media in step
 
-With `controls`, a presenter's play, pause or seek in a clip's controls is sent as
-`mediaAction({shape, slide, action, at, time, trigger})`: the clip plays or pauses `at` seconds in,
-as of `time` on the player's `clock`. `trigger` is `controls` (a play or pause in the controls),
-`seek` (a seek in them) or `ended` (the clip on the slide shown got to its end by itself, which
-every client sees at once). Pass each one to `player.mediaAction(a)` on every client, the
-presenter's included, and keep the latest one per clip to give someone who joins.
+With `controls`, a presenter's play, pause or seek in a clip's controls, or a change of its volume or
+mute, is sent as `mediaAction({shape, slide, action, at, time, volume, muted, trigger})`: the clip
+plays or pauses `at` seconds in, as of `time` on the player's `clock`, at `volume` (0–1) and
+`muted`. `trigger` is `controls` (a play, pause, volume or mute change in the controls), `seek` (a
+seek in them) or `ended` (the clip on the slide shown got to its end by itself, which every client
+sees at once). `slide` is the clip's slide; `player.mediaAction(a)` applies an action that has one
+only to that slide's clip, since shape ids are unique only within a slide. Pass each one to
+`player.mediaAction(a)` on every client, the presenter's included, and keep the latest one per clip
+to give someone who joins.
 
 **A media action never moves the deck.** Send it with the clip's state only, not with the sending
 presenter's slide and step: with two presenters, one may already be on the next slide when the
-other's clip ends. `slide` is the clip's slide, so a room can also drop an action for a slide other
-than its own. The player's own plays, pauses and seeks (media effects on the timeline, trims,
-loops, keeping in step) are never sent, since every client does them itself, and a clip on a slide
-no longer shown sends nothing.
+other's clip ends. A room can also drop an action for a slide other than its own. The player's own
+plays, pauses and seeks (media effects on the timeline, trims, loops, keeping in step) are never
+sent, since every client does them itself, and a clip on a slide no longer shown sends nothing.
 
 What the player does with them:
+
+- everyone hears the clip as the presenter set it, as an audience hears the presenter's computer in
+  PowerPoint. A clip starts with the deck's volume and Mute, kept apart: a clip muted in PowerPoint
+  unmutes at its own volume. A change of sound is sent as what the clip is doing at that moment, so
+  older players, which ignore `volume` and `muted`, just keep to it; an action without them
+  leaves the sound as it is. A YouTube video's own controls report no volume changes;
+- a browser that won't unmute a playing clip before the viewer has clicked in the page pauses it;
+  the player then reports `sound-blocked`, as for any play refused for its sound, and keeps the
+  presenter's sound for when the clip is played again;
 
 - a playing clip starts where it has got to since `time`, so a late message or a newcomer lands
   where everyone else is (a looping clip goes round its loop; one that would have ended stays put);

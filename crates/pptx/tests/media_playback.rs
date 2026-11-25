@@ -129,6 +129,23 @@ fn volume_loop_and_hiding_survive_a_save() {
 }
 
 #[test]
+fn a_muted_clip_is_saved_as_powerpoint_saves_mute() {
+    let (q, xml) = round_trip(|m| {
+        m.volume = 0.8;
+        m.muted = true;
+    });
+    // Silent to a reader that knows only `vol`; opened again, it unmutes at full volume.
+    assert!(xml.contains(r#"<p:cMediaNode vol="0" mute="1">"#), "{xml}");
+    assert_eq!((music(&q).volume, music(&q).muted), (1.0, true), "{xml}");
+}
+
+#[test]
+fn a_muted_node_from_powerpoint_keeps_its_volume() {
+    let p = with_timing(&deck_with_music(), |spid| timing(spid, &music_node(spid, r#"vol="80000" mute="1""#, "")));
+    assert_eq!((music(&p).volume, music(&p).muted), (0.8, true));
+}
+
+#[test]
 fn a_clip_with_default_options_writes_no_media_node() {
     let (q, xml) = round_trip(|_| {});
     assert!(!xml.contains("cMediaNode"), "{xml}");

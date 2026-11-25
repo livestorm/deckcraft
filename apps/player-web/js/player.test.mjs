@@ -158,7 +158,7 @@ function fakeYouTube () {
   const yt = { PlayerState: S, made: null }
   yt.Player = function (target, opts) {
     const p = { target, opts, calls: [], time: 0, length: 0 }
-    for (const name of ['playVideo', 'pauseVideo', 'setVolume', 'destroy']) p[name] = (...a) => p.calls.push([name, ...a])
+    for (const name of ['playVideo', 'pauseVideo', 'setVolume', 'mute', 'unMute', 'destroy']) p[name] = (...a) => p.calls.push([name, ...a])
     p.seekTo = t => { p.calls.push(['seekTo', t]); p.time = t }
     p.getCurrentTime = () => p.time
     p.getDuration = () => p.length
@@ -184,6 +184,7 @@ async function readyClip (opts = {}) {
 }
 
 const settle = () => new Promise(resolve => setImmediate(resolve))
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 
 test('a YouTube clip makes its player in privacy-enhanced mode, without controls for attendees', async () => {
   const { p } = await readyClip()
@@ -471,12 +472,29 @@ class FakeMedia extends EventTarget {
     this.loop = false
     this.duration = 60
     this.playbackRate = 1
+    this.volume_ = 1
+    this.muted_ = false
+    this.blocksUnmute = false // a browser that pauses a playing clip unmuted before a click
+  }
+
+  // As in a browser, a change of sound fires its event later, as a task.
+  get volume () { return this.volume_ }
+  set volume (v) { this.volume_ = v; this.fireLater('volumechange') }
+  get muted () { return this.muted_ }
+  set muted (m) {
+    this.muted_ = m
+    this.fireLater('volumechange')
+    if (!m && this.blocksUnmute && !this.paused) { this.paused = true; this.fireLater('pause') }
   }
 
   play () { this.paused = false; return Promise.resolve() }
   pause () { this.paused = true }
   fire (type) { this.dispatchEvent(new Event(type)) }
+  fireLater (type) { setImmediate(() => this.fire(type)) }
 }
+
+// The sound of a clip nobody has changed: full volume, not muted.
+const FULL = { volume: 1, muted: false }
 
 // A presenter's player with one clip on the slide shown, and the media actions it sends.
 function presenterWithClip () {
@@ -484,7 +502,9 @@ function presenterWithClip () {
   p.controls = true
   p.position = [0, 0]
   p.clock = () => 1000
-  const clip = { shape: 7, slide: 0, el: new FakeMedia(), quiet: 0 }
+  p.soundDelay = 0
+  const el = new FakeMedia()
+  const clip = { shape: 7, slide: 0, el, quiet: 0, sound: { volume: 1, muted: false } }
   p.media = [clip]
   p.report(clip)
   const sent = []
@@ -501,8 +521,8 @@ test('a presenter\'s seek is sent with where the clip is and whether it plays', 
   el.currentTime = 3
   el.fire('seeked')
   assert.deepEqual(sent, [
-    { shape: 7, slide: 0, action: 'play', at: 42, time: 1000, trigger: 'seek' },
-    { shape: 7, slide: 0, action: 'pause', at: 3, time: 1000, trigger: 'seek' }
+    { shape: 7, slide: 0, action: 'play', at: 42, time: 1000, ...FULL, trigger: 'seek' },
+    { shape: 7, slide: 0, action: 'pause', at: 3, time: 1000, ...FULL, trigger: 'seek' }
   ])
 })
 
@@ -524,7 +544,7 @@ test('the player\'s own seeks are not sent: media actions, cues, and a video sta
   el.paused = false
   el.currentTime = 60
   el.fire('seeked')
-  assert.deepEqual(sent, [{ shape: 7, slide: 0, action: 'play', at: 60, time: 1000, trigger: 'seek' }])
+  assert.deepEqual(sent, [{ shape: 7, slide: 0, action: 'play', at: 60, time: 1000, ...FULL, trigger: 'seek' }])
 })
 
 test('a presenter\'s play and pause carry the time on the shared clock', () => {
@@ -534,8 +554,8 @@ test('a presenter\'s play and pause carry the time on the shared clock', () => {
   el.currentTime = 9
   el.fire('pause')
   assert.deepEqual(sent, [
-    { shape: 7, slide: 0, action: 'play', at: 4, time: 1000, trigger: 'controls' },
-    { shape: 7, slide: 0, action: 'pause', at: 9, time: 1000, trigger: 'controls' }
+    { shape: 7, slide: 0, action: 'play', at: 4, time: 1000, ...FULL, trigger: 'controls' },
+    { shape: 7, slide: 0, action: 'pause', at: 9, time: 1000, ...FULL, trigger: 'controls' }
   ])
 })
 
@@ -547,7 +567,7 @@ test('a clip reaching its end is sent as ended, not as a presenter\'s pause', ()
   el.paused = true
   el.fire('pause') // a media element pauses itself at its end, then fires ended
   el.fire('ended')
-  assert.deepEqual(sent, [{ shape: 7, slide: 0, action: 'pause', at: 60, time: 1000, trigger: 'ended' }])
+  assert.deepEqual(sent, [{ shape: 7, slide: 0, action: 'pause', at: 60, time: 1000, ...FULL, trigger: 'ended' }])
 })
 
 test('a clip on a slide no longer shown sends nothing', () => {
@@ -575,7 +595,7 @@ test('the player\'s own seek whose seeked comes seconds late, the clip playing o
   assert.deepEqual(sent, [])
   el.currentTime = 50 // then a presenter's own seek
   el.fire('seeked')
-  assert.deepEqual(sent, [{ shape: 7, slide: 0, action: 'play', at: 50, time: 1000, trigger: 'seek' }])
+  assert.deepEqual(sent, [{ shape: 7, slide: 0, action: 'play', at: 50, time: 1000, ...FULL, trigger: 'seek' }])
 })
 
 test('a presenter\'s seek elsewhere while the player\'s own is pending is sent; a stale own seek is forgotten', () => {
@@ -1042,4 +1062,115 @@ test('the media prefix and its credentials reach the worker, and `images` is rep
     { imageMs: 30, imagesLoaded: 2, imagesFailed: 1, imageBytes: 2048 },
     { type: 'error', message: 'image-unavailable', url: 'https://cdn.example/decks/42/a.png', slide: 3, reason: 'status 404', fatal: false },
   ])
+})
+
+test('a clip starts with the deck\'s volume and mute, kept apart', async () => {
+  const made = []
+  globalThis.document = { createElement: () => { const el = Object.assign(new FakeMedia(), { style: {} }); made.push(el); return el } }
+  try {
+    const p = bareCanvasPlayer()
+    p.layer = { replaceChildren () {}, append () {} }
+    p.media = []
+    p.soundDelay = 0
+    p.controls = true
+    p.position = [0, 0]
+    p.clock = () => 0
+    const sent = []
+    p.on('mediaAction', a => sent.push(a))
+    const clip = { slide: 0, video: true, contentType: 'video/mp4', data: new Uint8Array(1), rect: [0, 0, 1, 1] }
+    p.buildMedia([{ ...clip, shape: 1, volume: 0.8, muted: true }, { ...clip, shape: 2, volume: 0.5 }, { ...clip, shape: 3 }])
+    assert.deepEqual(made.map(el => [el.volume, el.muted]), [[0.8, true], [0.5, false], [1, false]])
+    await wait(5)
+    assert.deepEqual(sent, [], 'setting them up is not a presenter\'s change')
+    // The native mute button: unmuted, the clip plays at the deck's volume, for everyone.
+    made[0].muted = false
+    await wait(5)
+    assert.deepEqual(sent, [{ shape: 1, slide: 0, action: 'pause', at: 0, time: 0, volume: 0.8, muted: false, trigger: 'controls' }])
+  } finally {
+    delete globalThis.document
+  }
+})
+
+test('a presenter\'s volume and mute changes are sent with what the clip is doing', async () => {
+  const { el, sent } = presenterWithClip()
+  el.paused = false
+  el.currentTime = 12
+  el.volume = 0.4
+  await wait(5)
+  el.paused = true
+  el.muted = true
+  await wait(5)
+  assert.deepEqual(sent, [
+    { shape: 7, slide: 0, action: 'play', at: 12, time: 1000, volume: 0.4, muted: false, trigger: 'controls' },
+    { shape: 7, slide: 0, action: 'pause', at: 12, time: 1000, volume: 0.4, muted: true, trigger: 'controls' }
+  ])
+  el.fire('volumechange') // nothing changed
+  assert.equal(sent.length, 2)
+})
+
+test('sound set from a media action is not sent back', async () => {
+  const { p, el, sent } = presenterWithClip()
+  p.mediaAction({ shape: 7, action: 'pause', at: 0, time: 1000, volume: 0.3, muted: true })
+  assert.deepEqual([el.volume, el.muted], [0.3, true])
+  await wait(5)
+  assert.deepEqual(sent, [])
+})
+
+test('every viewer hears the clip as the presenter set it', () => {
+  const { p, el } = viewerWithClip()
+  el.muted = true
+  p.mediaAction({ shape: 7, action: 'play', at: 0, time: 0, volume: 0.6, muted: false })
+  assert.deepEqual([el.volume, el.muted, el.paused], [0.6, false, false])
+  p.mediaAction({ shape: 7, action: 'play', at: 0, time: 0, volume: 7, muted: true })
+  assert.deepEqual([el.volume, el.muted], [1, true], 'a volume out of range is clamped')
+})
+
+test('a media action from an older player leaves the sound as it is', () => {
+  const { p, el } = viewerWithClip()
+  el.volume = 0.2
+  el.muted = true
+  p.mediaAction({ shape: 7, action: 'play', at: 0, time: 0 })
+  assert.deepEqual([el.volume, el.muted], [0.2, true])
+  p.mediaAction({ shape: 7, action: 'play', at: 0, time: 0, volume: null, muted: 'no' })
+  assert.deepEqual([el.volume, el.muted], [0.2, true])
+})
+
+test('an unmute the browser refuses before a click is blocked sound, and not a presenter\'s pause', async () => {
+  const { p, el, sent } = presenterWithClip()
+  el.muted_ = true
+  p.media[0].sound = { volume: 1, muted: true }
+  el.paused = false
+  el.blocksUnmute = true
+  el.play = () => Promise.reject(Object.assign(new Error('blocked'), { name: 'NotAllowedError' }))
+  p.mediaAction({ shape: 7, action: 'play', at: 0, time: 1000, volume: 1, muted: false })
+  await wait(5)
+  assert.deepEqual(p.errors, ['sound-blocked'])
+  assert.deepEqual(sent, [])
+  assert.equal(el.muted, false, 'the presenter\'s sound is kept, for when sound is allowed')
+})
+
+test('a YouTube clip mutes and unmutes its player, once it is ready too', async () => {
+  const yt = fakeYouTube()
+  const clip = new YouTubeClip({ id: 'dQw4w9WgXcQ', box: fakeBox(), api: async () => yt })
+  clip.muted = true
+  clip.mount()
+  await wait(5)
+  yt.fire('onReady')
+  assert.deepEqual(yt.made.calls, [['setVolume', 100], ['mute']])
+  clip.muted = false
+  assert.deepEqual(yt.made.calls.at(-1), ['unMute'])
+  assert.equal(clip.muted, false)
+  clip.destroy()
+})
+
+test('a drag of the volume slider is sent once, when it rests', async () => {
+  const { p, el, sent } = presenterWithClip()
+  p.soundDelay = 20
+  for (const v of [0.9, 0.7, 0.5, 0.3]) {
+    el.volume = v
+    await settle()
+  }
+  assert.deepEqual(sent, [])
+  await wait(40)
+  assert.deepEqual(sent, [{ shape: 7, slide: 0, action: 'pause', at: 0, time: 1000, volume: 0.3, muted: false, trigger: 'controls' }])
 })

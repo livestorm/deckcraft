@@ -26,15 +26,18 @@
 // and counted again. A picture that can't be fetched or drawn gives
 // error({message: 'image-unavailable', url, slide, reason, fatal: false}); the deck plays on, and
 // its box draws as an empty picture, as any picture whose bytes can't be read does,
-// mediaAction({shape, slide, action, at, time, trigger}) when someone with controls plays, pauses or
-// seeks a clip themselves, or a clip on the slide shown reaches its end; `time` is when, on `clock`.
-// `trigger` says which: 'controls' (play or pause in the clip's controls), 'seek' (a seek in them) or
-// 'ended' (the clip got to its end by itself, on every client at once). Only 'controls' and 'seek'
-// are a presenter's doing. None of them moves the deck: send each with the clip's state only, never
-// with this viewer's position, since another presenter may have moved on. The player's own plays,
-// pauses and seeks (timeline cues, trims, loops, keeping in step) are never sent: every client does
-// them itself. Pass every media action to p.mediaAction(a) on every client, and hand the latest one
-// per clip to someone joining: playing clips keep to it.
+// mediaAction({shape, slide, action, at, time, volume, muted, trigger}) when someone with controls
+// plays, pauses, seeks or changes the volume or mute of a clip themselves, or a clip on the slide
+// shown reaches its end; `time` is when, on `clock`, and `volume` (0-1) and `muted` are the clip's
+// sound then. `trigger` says which: 'controls' (play, pause, volume or mute in the clip's controls),
+// 'seek' (a seek in them) or 'ended' (the clip got to its end by itself, on every client at once).
+// Only 'controls' and 'seek' are a presenter's doing. None of them moves the deck: send each with the
+// clip's state only, never with this viewer's position, since another presenter may have moved on.
+// The player's own plays, pauses and seeks (timeline cues, trims, loops, keeping in step) are never
+// sent: every client does them itself. Pass every media action to p.mediaAction(a) on every client,
+// and hand the latest one per clip to someone joining: playing clips keep to it, and everyone hears
+// the clip as its presenter set it. A clip starts with the deck's own volume and Mute. Actions
+// without `volume` or `muted` (older players) leave the sound as it is.
 // `clock` gives the time in ms that all clients share, best the server's: Date.now by default.
 // A YouTube video (PowerPoint's online video) plays in YouTube's player, in privacy-enhanced mode;
 // one that can't play gives error({message: 'video-unavailable', fatal: false}).
@@ -53,6 +56,21 @@
 // p.links holds the current slide's links ({target, shape, text, rect, quad, tooltip, label}, in
 // fractions of the slide); p.linkAt(x, y) resolves to the one a click there follows, or null.
 // Clicks on clips' own controls go to the clips, as before.
+
+// A clip's volume as a media element takes it: 0-1, full when not a number.
+export function clampVolume (v) {
+  return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1
+}
+
+// A media element's sound, as media actions carry it.
+export function soundOf (el) {
+  return { volume: el.volume, muted: !!el.muted }
+}
+
+// Does `el` sound as `s` says? Volumes are compared loosely: a browser may round what it was given.
+export function sameSound (s, el) {
+  return !!s && s.muted === !!el.muted && Math.abs(s.volume - el.volume) < 0.005
+}
 
 // What a clip does at `time` seconds of `duration`: null to carry on, else `{seek}` (back to its
 // trim start, looping) or `{stop}`. Untrimmed clips are left to the media element and its own
@@ -124,8 +142,8 @@ export function loadYouTubeApi (win = globalThis, timeoutMs = 15000) {
 const OWN_SEEK_MS = 15000
 
 // A YouTube video with the part of a media element's interface the player uses: play() and
-// pause(), paused, ended, currentTime, duration, volume, loop, and the play, pause, timeupdate, seeked
-// and ended events (plus error). seeked is fired for a seek in YouTube's own controls only. Its player is made the first time it's shown (mount). `api` gives the
+// pause(), paused, ended, currentTime, duration, volume, muted, loop, and the play, pause,
+// timeupdate, seeked and ended events (plus error). seeked is fired for a seek in YouTube's own controls only. Its player is made the first time it's shown (mount). `api` gives the
 // YouTube IFrame API; `box` is the element it's drawn in.
 export class YouTubeClip extends EventTarget {
   constructor ({ id, box, api, endMs = 0, now = () => performance.now() }) {
@@ -145,6 +163,7 @@ export class YouTubeClip extends EventTarget {
     this.paused_ = true
     this.ended_ = false
     this.volume_ = 1
+    this.muted_ = false
     this.seek = null
     this.state = -1
     this.startAt = null
@@ -187,6 +206,13 @@ export class YouTubeClip extends EventTarget {
     this.player?.setVolume(Math.round(v * 100))
   }
 
+  get muted () { return this.muted_ }
+  set muted (m) {
+    this.muted_ = !!m
+    if (this.muted_) this.player?.mute()
+    else this.player?.unMute()
+  }
+
   mount () {
     if (this.mounted) return
     this.mounted = true
@@ -217,6 +243,7 @@ export class YouTubeClip extends EventTarget {
     if (this.destroyed) return player.destroy()
     this.player = player
     player.setVolume(Math.round(this.volume_ * 100))
+    if (this.muted_) player.mute()
     if (this.seek !== null) this.currentTime = this.seek
     this.seek = null
     if (!this.paused_) player.playVideo()
@@ -683,13 +710,16 @@ export class DeckcraftPlayer {
       }
       el.preload = 'auto'
       el.playsInline = true
-      el.volume = Math.min(1, Math.max(0, c.volume ?? 1))
+      // Mute is separate from the volume: the native mute button then unmutes at the deck's volume.
+      el.volume = clampVolume(c.volume)
+      el.muted = !!c.muted
       el.loop = !!c.loop && !c.trimStartMs && !c.trimEndMs
       el.controls = this.controls
       const [x, y, w, h] = c.rect
       el.style.cssText = `position:absolute;left:${x * 100}%;top:${y * 100}%;width:${w * 100}%;height:${h * 100}%;object-fit:contain;display:none;pointer-events:${this.controls ? 'auto' : 'none'}`
       if (!c.video) el.style.height = 'auto'
-      const clip = { ...c, el, data: undefined, quiet: 0 }
+      // `sound`: the volume and mute the player last set or sent, to tell a presenter's change from its own.
+      const clip = { ...c, el, data: undefined, quiet: 0, sound: soundOf(el) }
       const trim = () => {
         const step = trimStep(c, el.currentTime, el.duration)
         if (!step) return
@@ -705,17 +735,28 @@ export class DeckcraftPlayer {
     })
   }
 
-  // A presenter's own plays, pauses and seeks, for everyone else to follow, and a clip reaching its
-  // end: not the player's own. A seek is sent as what the clip is doing (play or pause) at its new
-  // time. A clip on a slide no longer shown sends nothing: its controls are hidden, so whatever it
-  // does there is not a presenter's.
+  // A presenter's own plays, pauses, seeks and sound changes, for everyone else to follow, and a clip
+  // reaching its end: not the player's own. A seek or a change of volume or mute is sent as what the
+  // clip is doing (play or pause) at its time then, so older players just keep to it. Each action
+  // carries the sound. A clip on a slide no longer shown sends nothing: its controls are hidden, so
+  // whatever it does there is not a presenter's.
   report (clip) {
     const { el, shape, slide } = clip
     const send = (action, trigger) => {
       clip.anchor = { action, at: el.currentTime, time: this.clock() }
+      clip.sound = soundOf(el)
       if (slide !== this.position?.[0]) return
-      this.emit('mediaAction', { shape, slide, ...clip.anchor, trigger })
+      this.emit('mediaAction', { shape, slide, ...clip.anchor, ...clip.sound, trigger })
     }
+    // A drag of the volume slider fires many changes: the sound is sent once it has rested for
+    // `soundDelay` ms. A YouTube video's own controls report no volume changes.
+    el.addEventListener('volumechange', () => {
+      clearTimeout(clip.soundTimer)
+      if (sameSound(clip.sound, el)) return
+      clip.soundTimer = setTimeout(() => {
+        if (!sameSound(clip.sound, el)) send(el.paused ? 'pause' : 'play', 'controls')
+      }, this.soundDelay ?? 300)
+    })
     for (const action of ['play', 'pause']) {
       el.addEventListener(action, () => {
         if (clip.quiet > 0) clip.quiet -= 1
@@ -802,9 +843,10 @@ export class DeckcraftPlayer {
   // A clip played or paused by the presenter, `at` seconds in at `time`: every client does the
   // same, and a playing clip starts where it has got to since. Without a time (players before
   // 0.5.0), it starts at `at` and isn't kept in step.
-  mediaAction ({ shape, action, at, time }) {
+  mediaAction ({ shape, action, at, time, volume, muted }) {
     const m = this.clip(shape)
     if (!m) return
+    this.setSound(m, volume, muted)
     m.anchor = time == null ? null : { action, at, time }
     const t = m.anchor ? this.target(m) : at
     if (t == null) return this.pause(m)
@@ -849,6 +891,23 @@ export class DeckcraftPlayer {
 
   clip (shape) {
     return this.media.find(x => x.shape === shape && x.slide === this.position?.[0])
+  }
+
+  // The presenter's volume and mute on this clip; either left as it is when not given. Recorded
+  // first, so the volumechange it fires is known as the player's own and not sent back. A browser
+  // that won't unmute a playing clip before a click pauses it instead; the play that follows is then
+  // refused, which reports sound-blocked as any refused play does.
+  setSound (m, volume, muted) {
+    const want = {
+      volume: Number.isFinite(volume) ? clampVolume(volume) : m.el.volume,
+      muted: typeof muted === 'boolean' ? muted : m.el.muted
+    }
+    if (sameSound(want, m.el)) return
+    const playing = !m.el.paused
+    m.sound = want
+    m.el.volume = want.volume
+    m.el.muted = want.muted
+    if (playing && m.el.paused) m.quiet += 1 // its pause event isn't the presenter's
   }
 
   // Plays and pauses made here aren't the presenter's own clicks: the event they fire is skipped

@@ -239,8 +239,10 @@ pub struct MediaClip {
     pub trim_end_ms: u32,
     pub fade_in_ms: u32,
     pub fade_out_ms: u32,
-    /// 0–1.
+    /// 0–1. Kept when the clip is muted, as PowerPoint keeps it.
     pub volume: f64,
+    /// Muted (PowerPoint's Mute, `p:cMediaNode mute="1"`): silent at any volume, until unmuted.
+    pub muted: bool,
     pub autoplay: bool,
     pub loop_play: bool,
     pub rewind: bool,

@@ -93,7 +93,10 @@ pub struct MediaClip {
     pub link: Option<String>,
     /// Box on the slide as fractions of the slide's width and height: `[x, y, w, h]`.
     pub rect: [f64; 4],
+    /// 0–1, kept while muted.
     pub volume: f64,
+    /// Muted: silent until someone unmutes it, then at `volume`.
+    pub muted: bool,
     /// Loop until Stopped.
     pub loop_play: bool,
     pub trim_start_ms: u32,
@@ -450,6 +453,7 @@ impl Player {
                     link: item.link.clone(),
                     rect: [r.x0 / sw, r.y0 / sh, r.width() / sw, r.height() / sh],
                     volume: clip.volume,
+                    muted: clip.muted,
                     loop_play: clip.loop_play,
                     trim_start_ms: clip.trim_start_ms,
                     trim_end_ms: clip.trim_end_ms,

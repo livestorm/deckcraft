@@ -3,9 +3,13 @@
 What the webinar room has to do to adopt each version of `@livestorm/deckcraft-player`. The API is
 documented in the package's README and at the top of `player.js` and `worker.js`.
 
-## Unreleased: a clip's volume and Mute kept apart
+## 0.13.0: clip sound kept apart from Mute, media actions that don't move the deck, missing pictures explained
 
-Draft for the next release (merged into its section when the version is set).
+Three changes, each with its own room work. **Bump `@livestorm/deckcraft-player` to 0.13.0 and ship
+the room changes below with it**: the media-action change in particular needs the room's side to
+stop slides moving on their own.
+
+### A clip's volume and Mute kept apart
 
 A customer reported that the sound button on videos did nothing until the volume slider was moved,
 and that a slide's video was locked on mute. The deck's video was muted in PowerPoint, which saved
@@ -20,7 +24,7 @@ else, so attendees, who have no controls, can never hear a clip that starts mute
   muted. The rule: `muted` is true when the deck says `mute="1"` or its volume is 0 (how PowerPoint
   saves Mute); a muted clip whose deck volume is 0 or absent gets `volume: 1`; any other volume, low
   ones included (0.08 is the author's choice), is passed as it is, unmuted. `volume` is never 0.
-- The same rule for the current 0.12.0 player, which has no `muted`: treat `volume === 0` as
+- The same rule for the 0.12.0 player, which has no `muted`: treat `volume === 0` as
   `muted: true, volume: 1`.
 - `YouTubeClip` (exported from `player.js`) has a `muted` property: setting it mutes or unmutes
   YouTube's player, now or once it is ready.
@@ -31,23 +35,20 @@ else, so attendees, who have no controls, can never hear a clip that starts mute
 
 **What to change in the room** (`deckcraft-player.ts` has its own media layer):
 
-1. Bump `@livestorm/deckcraft-player` to the release with this change.
-2. In `buildMedia`, set both: `el.volume = clamp(c.volume ?? 1)` and `el.muted = !!c.muted`. That
+1. In `buildMedia`, set both: `el.volume = clamp(c.volume ?? 1)` and `el.muted = !!c.muted`. That
    alone fixes the dead mute button.
-3. Send a presenter's volume and mute changes (the element's `volumechange`, not the player's own
+2. Send a presenter's volume and mute changes (the element's `volumechange`, not the player's own
    changes) with play and pause, and apply received ones on every viewer. Extend `MediaAction` with
    optional `volume` and `muted`; send a change as the clip's current `play` or `pause` at its
    current time, so players that ignore the new fields just keep in step. A volume slider drag
    fires many `volumechange` events: send once it rests.
-4. Late joiners get the clip's sound from the latest stored action: check that Rails
+3. Late joiners get the clip's sound from the latest stored action: check that Rails
    (`RoomChannel#manage_media`, `medias_params["powerpoint"]["clips"]`) keeps `volume` and `muted`.
-5. Keep the sound-blocked flow: a browser that won't unmute a playing clip before the viewer has
+4. Keep the sound-blocked flow: a browser that won't unmute a playing clip before the viewer has
    clicked pauses it instead. Treat that as blocked sound (`resumeSound`), and don't send that pause
    as the presenter's.
 
-## Unreleased: media actions say what made them, and only the slide shown sends them
-
-Draft for the next release (merged into its section when the version is set).
+### Media actions say what made them, and only the slide shown sends them
 
 A customer's webinar with two presenters (the organiser and a speaker) had slides with videos
 switch between slides 3 and 4 on their own. Each presenter's player sends `mediaAction`, and the
@@ -90,9 +91,7 @@ Without the room change, this version stops the late-seek and off-slide sends, b
 still reaches the room as a pause from both presenters, and the room still moves to the sender's
 position. Ship both together.
 
-## Unreleased: why a linked picture is missing, and retries for passing failures
-
-Draft for the next release (merged into its section when the version is set).
+### Why a linked picture is missing, and retries for passing failures
 
 Every upload of one customer's deck in November logged `Deck media unavailable` for linked (CDN)
 pictures. Morpheus's pictures decode, so they failed while being fetched, but the room's event
@@ -129,8 +128,7 @@ fetched again for the rest of the webinar: a box with a cross on its slide until
 
 **What to change in the room:**
 
-1. Bump `@livestorm/deckcraft-player` to the release with this change.
-2. Add to `Deck media unavailable` (source `linked_image`): `code`, `status`, `retry`, `file`,
+1. Add to `Deck media unavailable` (source `linked_image`): `code`, `status`, `retry`, `file`,
    `slide`, `onScreen` and `ms`. Leave out `url` if it is signed. Count a picture as lost only on
    `retry: false`.
 

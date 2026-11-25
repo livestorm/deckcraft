@@ -24,7 +24,8 @@
 // and the previous one, only pictures the deck doesn't hold and that haven't failed). Pictures of
 // slides further away are released, so a released one is fetched again when its window comes back,
 // and counted again. A picture that can't be fetched or drawn gives
-// error({message: 'image-unavailable', url, slide, reason, fatal: false}); the deck plays on, and
+// error({message: 'image-unavailable', url, slide, reason, fatal: false, code, status, file, media,
+// slides, onScreen, retry, ms}) (see worker.js); the deck plays on, and
 // its box draws as an empty picture, as any picture whose bytes can't be read does,
 // mediaAction({shape, action, at, time, volume, muted}) when someone with controls plays, pauses,
 // seeks or changes the volume or mute of a clip themselves; `time` is when, on `clock`, and

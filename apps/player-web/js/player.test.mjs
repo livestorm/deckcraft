@@ -582,17 +582,29 @@ test('a clip on a slide no longer shown sends nothing', () => {
   assert.deepEqual(sent, [])
 })
 
-test('the player\'s own seek whose seeked comes seconds late, the clip playing on, is not sent', () => {
+test('the player\'s own seek whose seeked comes seconds late is not sent; a presenter\'s seek near it is', () => {
   const { p, el, sent } = presenterWithClip()
-  const now = { ms: 0 }
-  p.now = () => now.ms
-  el.paused = false
-  p.mediaAction({ shape: 7, action: 'play', at: 10, time: 1000 }) // another presenter's play: a jump to 10
-  assert.equal(el.currentTime, 10)
-  now.ms = 5000
-  el.currentTime = 14.8 // the seek finished late, and the clip has played on since
-  el.fire('seeked')
-  assert.deepEqual(sent, [])
+  const real = performance.now
+  let ms = real.call(performance)
+  performance.now = () => ms
+  try {
+    el.paused = false
+    p.mediaAction({ shape: 7, action: 'play', at: 10, time: 1000 }) // another presenter's play: a jump to 10
+    assert.equal(el.currentTime, 10)
+    ms += 5000 // a large video, still loading: the seek finishes 5 s later
+    el.fire('seeked')
+    assert.deepEqual(sent, [])
+    el.currentTime = 30
+    p.mediaAction({ shape: 7, action: 'play', at: 10, time: 1000 }) // the player seeks back to 10
+    assert.equal(el.currentTime, 10)
+    ms += 10000
+    el.currentTime = 18 // a presenter's seek replaced the player's, inside what it could have played to
+    el.fire('seeked')
+    assert.deepEqual(sent.map(a => [a.at, a.trigger]), [[18, 'seek']])
+  } finally {
+    performance.now = real
+  }
+  sent.length = 0
   el.currentTime = 50 // then a presenter's own seek
   el.fire('seeked')
   assert.deepEqual(sent, [{ shape: 7, slide: 0, action: 'play', at: 50, time: 1000, ...FULL, trigger: 'seek' }])
@@ -609,6 +621,33 @@ test('a presenter\'s seek elsewhere while the player\'s own is pending is sent; 
   now.ms = 20000 // its seeked never came
   el.fire('seeked') // a presenter's seek to where the old one went
   assert.deepEqual(sent.map(a => [a.at, a.trigger]), [[40, 'seek'], [20, 'seek']])
+})
+
+test('a YouTube video ended, then replayed or sought in YouTube\'s own controls, is no longer at its end', async () => {
+  const { yt, clip, p, clock } = await clockedClip()
+  const at = (ms, time) => { clock.ms = ms; p.time = time; clip.tick() }
+  clip.play()
+  yt.fire('onStateChange', S.PLAYING)
+  yt.fire('onStateChange', S.ENDED)
+  assert.equal(clip.ended, true)
+  yt.fire('onStateChange', S.PLAYING) // YouTube's replay button: no play() call
+  assert.equal(clip.ended, false)
+  yt.fire('onStateChange', S.ENDED)
+  yt.fire('onStateChange', S.PAUSED)
+  at(0, 60)
+  at(250, 60)
+  at(500, 5) // a seek in YouTube's controls while paused
+  assert.equal(clip.ended, false)
+  clip.destroy()
+})
+
+test('a media action for another slide leaves this slide\'s clip with the same shape id alone', () => {
+  const { p, el } = viewerWithClip()
+  p.mediaAction({ shape: 7, slide: 3, action: 'play', at: 20, time: 0 })
+  assert.equal(el.paused, true)
+  assert.equal(el.currentTime, 0)
+  p.mediaAction({ shape: 7, slide: 0, action: 'play', at: 20, time: 0 })
+  assert.equal(el.paused, false)
 })
 
 test('a YouTube video at its end says so until played or sought again', async () => {

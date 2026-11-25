@@ -280,6 +280,7 @@ export class YouTubeClip extends EventTarget {
     this.state = state
     if (state === S.PLAYING || state === S.PAUSED) this.startAt = null
     if (state === S.PLAYING) {
+      this.ended_ = false // played again, perhaps from YouTube's own controls
       for (const w of this.waiting.splice(0)) w.resolve()
       if (this.paused_) {
         this.paused_ = false
@@ -307,7 +308,10 @@ export class YouTubeClip extends EventTarget {
     this.last = [S.PLAYING, S.PAUSED, S.BUFFERING].includes(this.state) ? { t, at } : null
     if (!last || !this.last) return
     const most = (at - last.at) / 1000 * (this.player.getPlaybackRate?.() || 1)
-    if (t < last.t - 0.5 || t > last.t + most + 1) this.fire('seeked')
+    if (t < last.t - 0.5 || t > last.t + most + 1) {
+      this.ended_ = false
+      this.fire('seeked')
+    }
   }
 
   finish () {
@@ -771,19 +775,17 @@ export class DeckcraftPlayer {
     })
   }
 
-  // Is this seeked the player's own seek? Each seek gives one seeked, the latest's, but it can come
-  // seconds late (a large video still loading) and the clip may have played on meanwhile, so it is
-  // matched by where the clip can have got to since, for up to OWN_SEEK_MS. A seek that never gives
-  // one (a clip not loaded yet) is forgotten then.
+  // Is this seeked the player's own seek? Each seek gives one seeked, the latest's, and it can come
+  // seconds late (a large video still loading), so it is waited for up to OWN_SEEK_MS. The clip
+  // doesn't play on while seeking, so seeked finds it where the seek went: a seeked anywhere else
+  // is a presenter's seek that replaced the player's. A seek that never gives one (a clip not
+  // loaded yet) is forgotten after OWN_SEEK_MS.
   ownSeeked (clip) {
     const own = clip.ownSeek
     if (!own) return false
     clip.ownSeek = null
-    const { el } = clip
-    const since = this.now() - own.started
-    if (!(since < OWN_SEEK_MS)) return false
-    const ahead = el.paused ? 0 : since / 1000 * Math.max(1, el.playbackRate || 1) * 1.1
-    return el.currentTime > own.t - 0.25 && el.currentTime < own.t + ahead + 0.25
+    if (!(this.now() - own.started < OWN_SEEK_MS)) return false
+    return Math.abs(clip.el.currentTime - own.t) < 0.25
   }
 
   now () { return performance.now() }
@@ -843,7 +845,10 @@ export class DeckcraftPlayer {
   // A clip played or paused by the presenter, `at` seconds in at `time`: every client does the
   // same, and a playing clip starts where it has got to since. Without a time (players before
   // 0.5.0), it starts at `at` and isn't kept in step.
-  mediaAction ({ shape, action, at, time, volume, muted }) {
+  // An action that names its slide is for that slide's clip only: shape ids are unique only within a
+  // slide, so on another slide the same id can be an unrelated clip.
+  mediaAction ({ shape, slide, action, at, time, volume, muted }) {
+    if (slide != null && slide !== this.position?.[0]) return
     const m = this.clip(shape)
     if (!m) return
     this.setSound(m, volume, muted)

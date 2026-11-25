@@ -89,7 +89,7 @@ the pictures may come from — the path the decks themselves are served from:
 ```js
 const player = new DeckcraftPlayer(container, { mediaBase: MEDIA_CDN, mediaCredentials: 'include' })
 player.on('images', ({ loaded, failed, bytes, ms, slides }) => console.log(loaded, failed))
-player.on('error', e => { if (e.message === 'image-unavailable') console.warn(e.url, e.reason) })
+player.on('error', e => { if (e.message === 'image-unavailable') console.warn(e.file, e.code, e.status, e.retry) })
 ```
 
 - Without `mediaBase`, nothing is ever fetched, whatever a deck names.
@@ -114,13 +114,26 @@ player.on('error', e => { if (e.message === 'image-unavailable') console.warn(e.
   slides share stays while any of them is near). So a deck can link any number of pictures: the
   256 MB cap is on what is held at once, not on the deck. A released picture is fetched again when
   its window comes back; stepping back and forth one slide never fetches one again. A picture that
-  failed is not tried again (an error status, a timeout, too large, undecodable); one refused for
-  the 256 MB cap, which takes a window of more than 256 MB, is tried again on a later move. At
-  most 4 fetches at once, 20 s each, 32 MB per picture, 256 MB held at once and 512 pictures per
-  deck.
+  timed out, lost its connection or got a 5xx answer is fetched again when a later move brings its
+  window back (never in the move it failed in), at most twice more in a row, then given up; one
+  that loads starts afresh. One refused for the 256 MB cap, which takes a window of more than
+  256 MB, is tried again on every later move. Any other failure (a 4xx status, too large,
+  undecodable) is not tried again. At most 4 fetches at once, 20 s each, 32 MB per picture, 256 MB
+  held at once and 512 pictures per deck.
 - A picture that can't be fetched, or whose bytes aren't a picture this player draws, gives `error`
-  with `{message: 'image-unavailable', url, slide, reason, fatal: false}`; the deck plays on and it
-  never fails `open()`. Its box draws as an empty picture (a light grey rectangle with a cross), as
+  with `{message: 'image-unavailable', url, slide, reason, fatal: false, code, status, file, media,
+  slides, onScreen, retry, ms}`, once per failed attempt; the deck plays on and it never fails
+  `open()`.
+  - `code`, stable: `http` (an answer other than 2xx), `timeout` (20 s passed), `network` (no
+    answer: a CORS refusal, a lost connection, a refused redirect or an offline browser, which a
+    page cannot tell apart), `too-large`, `deck-budget`, `undecodable` or `unknown`.
+  - `status`: the HTTP status for `http`, else `null`. `reason`: the raw message, as before
+    (`status 403`, `timeout`, the browser's own text for a network failure).
+  - `file`: the last segment of the URL's path. `media`: the player's id for the picture.
+  - `slide`: the first slide that draws it; `slides`: every slide that does; `onScreen`: the slide
+    on screen when it failed.
+  - `retry`: whether a later move fetches it again; `false` means it is given up for this deck.
+  - `ms`: from its request to the failure. Its box draws as an empty picture (a light grey rectangle with a cross), as
   any picture whose bytes can't be read does.
 - `images({loaded, failed, bytes, ms, slides})` reports each round (the opening slide's, then each
   move that brought pictures the deck doesn't hold; add them up for the deck: a picture fetched
@@ -130,7 +143,8 @@ player.on('error', e => { if (e.message === 'image-unavailable') console.warn(e.
 
 Worker protocol: `mediaBase` and `mediaCredentials` are `init` options; the worker sends
 `{type: 'images', loaded, failed, bytes, ms, slides}` per round and
-`{type: 'error', message: 'image-unavailable', url, slide, reason, fatal: false}` per failure.
+`{type: 'error', message: 'image-unavailable', url, slide, reason, fatal: false, code, status,
+file, media, slides, onScreen, retry, ms}` per failure.
 
 ## Speaker notes for presenters
 

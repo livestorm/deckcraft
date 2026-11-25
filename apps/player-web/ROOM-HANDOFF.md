@@ -90,6 +90,50 @@ Without the room change, this version stops the late-seek and off-slide sends, b
 still reaches the room as a pause from both presenters, and the room still moves to the sender's
 position. Ship both together.
 
+## Unreleased: why a linked picture is missing, and retries for passing failures
+
+Draft for the next release (merged into its section when the version is set).
+
+Every upload of one customer's deck in November logged `Deck media unavailable` for linked (CDN)
+pictures. Morpheus's pictures decode, so they failed while being fetched, but the room's event
+doesn't say why. 0.12.0 already sends a `reason` and a `slide` with each failure; the room drops
+them. And a picture that failed once, even with one timeout behind a slow CDN response, was never
+fetched again for the rest of the webinar: a box with a cross on its slide until the page reloaded.
+
+**What changes in the package:**
+
+- `image-unavailable` keeps every 0.12.0 field (`url`, `slide`, `reason`, `fatal`; `reason` is
+  unchanged) and adds:
+
+  | Field | Value |
+  |---|---|
+  | `code` | `'http'` \| `'timeout'` \| `'network'` \| `'too-large'` \| `'deck-budget'` \| `'undecodable'` \| `'unknown'` |
+  | `status` | the HTTP status for `'http'`, else `null` |
+  | `file` | the last segment of the URL's path, e.g. `'image31.jpg'` |
+  | `media` | the player's id for the picture |
+  | `slides` | every slide (index) that draws it; `slide` stays the first of them |
+  | `onScreen` | the slide on screen when it failed |
+  | `retry` | `true` if a later move fetches it again, `false` once it is given up |
+  | `ms` | milliseconds from its request to the failure |
+
+  `'network'` is every failure without an answer: a CORS refusal (a 403 without
+  `Access-Control-Allow-Origin` included), a lost connection, a redirect (never followed) and an
+  offline browser. A page can't tell these apart; the CDN's logs, or DevTools on an affected
+  machine, can.
+- A picture that failed with `'timeout'`, `'network'` or a 5xx status is fetched again when a later
+  move brings its window back, never in the move it failed in, at most twice more (three requests
+  in a row), through the same queue of at most 4 fetches. A picture that loads starts afresh: if it
+  fails again later, it gets two more retries. A 4xx, `'too-large'` and `'undecodable'`
+  are never retried; `'deck-budget'` is tried again on every later move, as before. A failure is
+  reported each time, so one picture can give up to three events, the last with `retry: false`.
+
+**What to change in the room:**
+
+1. Bump `@livestorm/deckcraft-player` to the release with this change.
+2. Add to `Deck media unavailable` (source `linked_image`): `code`, `status`, `retry`, `file`,
+   `slide`, `onScreen` and `ms`. Leave out `url` if it is signed. Count a picture as lost only on
+   `retry: false`.
+
 ## 0.12.0: embedded fonts drawn, Line Color and Font Color animations fixed
 
 PowerPoint compresses the fonts it embeds in a deck (MicroType Express), and 0.11.0 could not read

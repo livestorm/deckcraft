@@ -2,7 +2,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue, answerLinkAt, fetchImage, openImages, windowSlides, IMAGE_WINDOW, IMAGE_KEEP, MAX_DECK_IMAGE_BYTES, MAX_IMAGE_BYTES, mediaUrl, MAX_IMAGE_FETCHES, readCapped } = require('./worker.js')
+const { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue, answerLinkAt, fetchImage, openImages, windowSlides, IMAGE_WINDOW, IMAGE_KEEP, MAX_DECK_IMAGE_BYTES, MAX_IMAGE_BYTES, mediaUrl, MAX_IMAGE_FETCHES, readCapped, MAX_IMAGE_RETRIES, fileOf } = require('./worker.js')
 
 const BASE = 'https://fonts.example/'
 
@@ -644,4 +644,182 @@ test('bytes that arrive after the deck was replaced are dropped, and nothing mor
   assert.deepEqual(player.set.map(s => s[0]), [1], 'slide 0’s picture only')
   assert.deepEqual(urls(server), ['a.png', 'b.png'], 'nothing started after the deck was replaced')
   assert.equal(rounds(posted).length, 1, 'and nothing reported for it')
+})
+
+// fetchImage on one picture used by slides 2 and 5, with `fetchFn` and `setImage`: the failure.
+async function failure (fetchFn, { setImage = () => {}, timeoutMs = 1000, maxBytes, budget } = {}) {
+  const failed = []
+  const got = await fetchImage(image(7, 'dir/p%20q.jpg', [2, 5]), { fetchFn, setImage, failed: f => failed.push(f), timeoutMs, maxBytes, budget })
+  assert.equal(got, null)
+  assert.equal(failed.length, 1)
+  const [f] = failed
+  assert.ok(f.ms >= 0 && Number.isFinite(f.ms), 'the time to fail is measured')
+  assert.deepEqual([f.media, f.url, f.slide, f.slides], [7, `${IMG_BASE}dir/p%20q.jpg`, 2, [2, 5]])
+  return [f.code, f.status, f.reason]
+}
+
+test('each failure carries a stable code, the HTTP status and the reason 0.12.0 gave', async () => {
+  const answer = (status, body = 4) => async () => ({ ok: status < 300, status, arrayBuffer: async () => new ArrayBuffer(body) })
+  assert.deepEqual(await failure(answer(404)), ['http', 404, 'status 404'])
+  assert.deepEqual(await failure(answer(403)), ['http', 403, 'status 403'])
+  assert.deepEqual(await failure(answer(503)), ['http', 503, 'status 503'])
+  // A CORS refusal, a lost connection and a refused redirect all reject with a TypeError.
+  assert.deepEqual(await failure(async () => { throw new TypeError('Failed to fetch') }), ['network', null, 'Failed to fetch'])
+  const brokenBody = async () => ({ ok: true, status: 200, headers: { get: () => null }, body: { getReader: () => ({ read: async () => { throw new TypeError('network error') }, cancel: async () => {} }) } })
+  assert.deepEqual(await failure(brokenBody), ['network', null, 'network error'], 'a body cut off mid-way')
+  const never = (url, opts) => new Promise((resolve, reject) => opts.signal.addEventListener('abort', () => reject(new Error('aborted'))))
+  assert.deepEqual(await failure(never, { timeoutMs: 10 }), ['timeout', null, 'timeout'])
+  assert.deepEqual(await failure(answer(200, 50), { maxBytes: 10 }), ['too-large', null, 'too-large'])
+  assert.deepEqual(await failure(answer(200, 50), { budget: { left: 10 } }), ['deck-budget', null, 'deck-budget'])
+  const refuse = message => () => { throw new Error(message) }
+  assert.deepEqual(await failure(answer(200), { setImage: refuse('undecodable') }), ['undecodable', null, 'undecodable'])
+  assert.deepEqual(await failure(answer(200), { setImage: refuse('deck-budget') }), ['deck-budget', null, 'deck-budget'])
+  assert.deepEqual(await failure(answer(200), { setImage: refuse('something odd') }), ['unknown', null, 'something odd'])
+})
+
+test('a picture’s file is the last segment of its URL path, as written', () => {
+  assert.equal(fileOf('https://cdn.example.com/decks/42/media/image31.jpg?sig=abc'), 'image31.jpg')
+  assert.equal(fileOf('https://cdn.example.com/decks/42/p%20q.jpg'), 'p%20q.jpg')
+  assert.equal(fileOf('https://cdn.example.com/'), '')
+  assert.equal(fileOf('not a url'), '')
+})
+
+// A media server whose answer to each URL is decided by `answer(url, n)`, n counting from 1 that
+// URL's requests: a status, 'network' or 'hang' (until aborted). It also counts fetches in flight.
+function flaky (answer) {
+  const asked = []
+  let inFlight = 0
+  let most = 0
+  const fetch = async (url, opts = {}) => {
+    asked.push(url)
+    const n = asked.filter(u => u === url).length
+    inFlight++
+    most = Math.max(most, inFlight)
+    try {
+      await flush()
+      const a = answer(url.slice(IMG_BASE.length), n)
+      if (a === 'network') throw new TypeError('Failed to fetch')
+      if (a === 'hang') await new Promise((resolve, reject) => opts.signal?.addEventListener('abort', () => reject(new Error('aborted'))))
+      return { ok: a < 300, status: a, arrayBuffer: async () => new ArrayBuffer(4) }
+    } finally {
+      inFlight--
+    }
+  }
+  return { fetch, asked, most: () => most }
+}
+const errors = posted => posted.filter(m => m.type === 'error')
+const count = (server, file) => server.asked.filter(u => u === `${IMG_BASE}${file}`).length
+
+test('image-unavailable gives the room the whole failure: code, status, file, slides, slide on screen, retry, time', async () => {
+  const all = [image(1, 'a.png', [0, 3]), image(2, 'media/gone.png', [1, 4])]
+  const player = deck(all)
+  const server = flaky(file => (file === 'media/gone.png' ? 404 : 200))
+  const posted = []
+  const show = await open(player, server, { posted })
+  await show(0)
+  await show(1)
+  const [e] = errors(posted)
+  assert.ok(e.ms >= 0)
+  delete e.ms
+  assert.deepEqual(e, {
+    type: 'error',
+    message: 'image-unavailable',
+    url: `${IMG_BASE}media/gone.png`,
+    slide: 1,
+    reason: 'status 404',
+    fatal: false,
+    code: 'http',
+    status: 404,
+    file: 'gone.png',
+    media: 2,
+    slides: [1, 4],
+    onScreen: 0,
+    retry: false,
+  })
+  assert.equal(errors(posted).length, 1)
+})
+
+test('a picture that timed out is fetched again on the next move, not in the move it failed in', async () => {
+  const all = [image(1, 'a.png', [0])]
+  const player = deck(all)
+  const server = flaky((file, n) => (n === 1 ? 'hang' : 200))
+  const posted = []
+  const show = await open(player, server, { posted, timeoutMs: 10 })
+  assert.deepEqual(errors(posted).map(e => [e.code, e.retry]), [['timeout', true]])
+  await show(0)
+  await flush()
+  assert.equal(count(server, 'a.png'), 1, 'asking for the same slide’s window again is not a move')
+  await show(1)
+  assert.equal(count(server, 'a.png'), 2, 'the next move whose window holds it fetches it again')
+  assert.deepEqual(player.set.map(s => s[0]), [1], 'and it is drawn')
+  assert.equal(errors(posted).length, 1)
+})
+
+test('a 5xx or network failure is retried at most twice more, each on a later move, then given up', async () => {
+  for (const fail of [503, 'network']) {
+    const all = [image(1, 'down.png', [0])]
+    const player = deck(all)
+    const server = flaky(() => fail)
+    const posted = []
+    const show = await open(player, server, { posted })
+    for (const s of [0, 1, 0, 1, 0, 1, 0, 2, 0]) {
+      await show(s)
+      await flush()
+    }
+    assert.equal(count(server, 'down.png'), 1 + MAX_IMAGE_RETRIES, `${fail}: three requests in all`)
+    assert.deepEqual(errors(posted).map(e => [e.code, e.status, e.retry]), [
+      [fail === 503 ? 'http' : 'network', fail === 503 ? 503 : null, true],
+      [fail === 503 ? 'http' : 'network', fail === 503 ? 503 : null, true],
+      [fail === 503 ? 'http' : 'network', fail === 503 ? 503 : null, false],
+    ])
+    assert.deepEqual(player.set, [])
+  }
+})
+
+test('a retry that succeeds draws the picture and is not reported again', async () => {
+  const all = [image(1, 'a.png', [0]), image(2, 'b.png', [0])]
+  const player = deck(all)
+  const server = flaky((file, n) => (file === 'b.png' && n === 1 ? 502 : 200))
+  const posted = []
+  const show = await open(player, server, { posted })
+  await show(1)
+  assert.deepEqual(player.set.map(s => s[0]).sort(), [1, 2])
+  assert.deepEqual(errors(posted).map(e => [e.file, e.status, e.retry, e.onScreen]), [['b.png', 502, true, 0]])
+  for (const s of [2, 1, 0]) await show(s)
+  assert.equal(count(server, 'b.png'), 2)
+})
+
+test('a 403 or 404 is never retried', async () => {
+  const all = [image(1, 'forbidden.png', [0]), image(2, 'missing.png', [0])]
+  const player = deck(all)
+  const server = flaky(file => (file === 'forbidden.png' ? 403 : 404))
+  const posted = []
+  const show = await open(player, server, { posted })
+  for (const s of [0, 1, 0, 1, 0, 5, 0]) await show(s)
+  assert.equal(count(server, 'forbidden.png'), 1)
+  assert.equal(count(server, 'missing.png'), 1)
+  assert.deepEqual(errors(posted).map(e => [e.status, e.retry]), [[403, false], [404, false]])
+})
+
+test('retries keep to the fetch limit', async () => {
+  const all = Array.from({ length: 8 }, (_, i) => image(i, `p${i}.png`, [0]))
+  const player = deck(all)
+  const server = flaky(() => 503)
+  const show = await open(player, server, { limit: 2 })
+  for (const s of [1, 0, 1, 0]) await show(s)
+  assert.equal(server.asked.length, 8 * (1 + MAX_IMAGE_RETRIES))
+  assert.equal(server.most(), 2)
+})
+
+test('a picture that loaded after a retry gets its full retries again if it later fails', async () => {
+  // a.png on slide 0: times out, loads on the retry, is released on the way to slide 10 and fails
+  // again with a 503 when its window comes back. That new failure gets its own two retries.
+  const all = [image(1, 'a.png', [0])]
+  const player = deck(all)
+  const server = flaky((file, n) => (n === 2 ? 200 : 503))
+  const posted = []
+  const show = await open(player, server, { posted })
+  for (const s of [1, 10, 0, 1, 0, 1, 0]) await show(s)
+  assert.deepEqual(errors(posted).map(e => [e.status, e.retry]), [[503, true], [503, true], [503, true], [503, false]])
+  assert.equal(count(server, 'a.png'), 5, 'one load, then three more requests after it was released')
 })

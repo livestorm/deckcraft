@@ -23,8 +23,10 @@
 //        move also releases the pictures no slide near it draws (IMAGE_KEEP: the window and one
 //        slide more each side), so the deck holds at most MAX_DECK_IMAGE_BYTES at once, however
 //        many it links; a released picture is fetched again, and counted again, when its window
-//        comes back. A failed picture is never tried again, except one refused for the budget
-//        ('deck-budget'), which is tried again on a later move. A picture whose slides all left
+//        comes back. A picture that failed with a timeout, a network failure or a 5xx status is
+//        tried again on a later move, at most MAX_IMAGE_RETRIES more times; one refused for the
+//        budget ('deck-budget') on every later move; any other failure (a 4xx status, too large,
+//        undecodable) never. A picture whose slides all left
 //        the window before it arrived is dropped, not counted. `slides` are the slides whose
 //        pictures arrived in that round
 //      {type: 'state', slide, step, animating}
@@ -40,7 +42,13 @@
 //        'lastSlide' | 'endShow'}
 //      {type: 'error', message, fatal}: fatal only for a trap in the module or a failed init;
 //        a linked picture that can't be fetched or drawn is {message: 'image-unavailable', url,
-//        slide, reason, fatal: false} and leaves the deck playing
+//        slide, reason, fatal: false, code, status, file, media, slides, onScreen, retry, ms} and
+//        leaves the deck playing: `reason` the raw message ('status 403', 'timeout', the browser's
+//        'Failed to fetch'…); `code` one of 'http', 'timeout', 'network', 'too-large',
+//        'deck-budget', 'undecodable', 'unknown' (imageCode); `status` the HTTP status for 'http',
+//        else null; `file` the URL's last path segment; `slide` the first slide drawing it and
+//        `slides` all of them; `onScreen` the slide on screen; `retry` whether a later move fetches
+//        it again; `ms` from its request to the failure
 
 /* global wasm_bindgen */ // declared by deckcraft_player.js, imported below
 
@@ -229,6 +237,11 @@ const MAX_MEDIA_URL = 2048
 // response is dropped before it is held in memory.
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024
 const MAX_DECK_IMAGE_BYTES = 256 * 1024 * 1024
+// How many more times a picture that failed for want of an answer (a timeout, a network failure)
+// or with a 5xx status is fetched, each on a later move than the last (openImages).
+const MAX_IMAGE_RETRIES = 2
+// Whether a failure (`imageCode`, with its HTTP status) may pass once the CDN or network recovers.
+const retryable = f => f.code === 'timeout' || f.code === 'network' || (f.code === 'http' && f.status >= 500 && f.status <= 599)
 
 // A response's body as bytes, read as it arrives and abandoned once it passes `max` bytes or the
 // deck's remaining `budget` ({left}), whichever is smaller. The budget is spent as bytes arrive;
@@ -297,23 +310,65 @@ function mediaUrl (url, base) {
   return `${target.origin}${target.pathname}${target.search}`
 }
 
+// Why a linked picture failed, as a stable code (the `reason` beside it is the raw message):
+// 'http' (an answer other than 2xx; `status` says which), 'timeout' (IMAGE_TIMEOUT_MS passed),
+// 'network' (the request or its body failed without an answer: a CORS refusal, a lost connection,
+// a refused redirect and an offline browser all look the same from a page, by design),
+// 'too-large', 'deck-budget', 'undecodable' or 'unknown' (refused by the player or this worker).
+const IMAGE_CODES = ['too-large', 'deck-budget', 'undecodable', 'unknown']
+function imageCode ({ aborted, stage, message }) {
+  if (aborted) return 'timeout'
+  if (stage === 'http') return 'http'
+  if (stage !== 'fetch' && IMAGE_CODES.includes(message)) return message
+  return stage === 'set' ? 'unknown' : 'network'
+}
+
+// The last segment of a picture's URL path, as the URL writes it: '' when there is none.
+function fileOf (url) {
+  try {
+    return new URL(url).pathname.split('/').pop() || ''
+  } catch {
+    return ''
+  }
+}
+
 // Fetch one linked picture `img` ({media, url, slides}) and hand its bytes to `setImage(media,
 // bytes)`, abandoned after `timeoutMs`. Never throws: a failed fetch, or bytes the player refuses,
-// goes to `failed` and resolves to null; otherwise resolves to the number of bytes.
+// goes to `failed` ({media, url, slide, slides, reason, code, status, ms}: `imageCode`) and
+// resolves to null; otherwise resolves to the number of bytes.
 async function fetchImage (img, { fetchFn = fetch, setImage, failed = () => {}, credentials = null, timeoutMs = IMAGE_TIMEOUT_MS, maxBytes = MAX_IMAGE_BYTES, budget = { left: MAX_DECK_IMAGE_BYTES } } = {}) {
   const stop = new AbortController()
   const timer = setTimeout(() => stop.abort(), timeoutMs)
+  const t0 = performance.now()
+  let stage = 'fetch'
+  let status = null
   try {
     // A redirect is never followed: it could leave the media prefix that `mediaUrl` checked, and
     // with credentials take them to another origin. A media server serves pictures in place.
     const r = await fetchFn(img.url, { signal: stop.signal, redirect: 'error', ...(credentials ? { credentials } : {}) })
-    if (!r.ok) throw new Error(`status ${r.status}`)
+    if (!r.ok) {
+      stage = 'http'
+      status = Number.isInteger(r.status) ? r.status : null
+      throw new Error(`status ${r.status}`)
+    }
+    stage = 'read'
     const buf = await readCapped(r, maxBytes, budget)
+    stage = 'set'
     setImage(img.media, buf)
     return buf.byteLength
   } catch (err) {
-    const reason = stop.signal.aborted ? 'timeout' : String(err && err.message ? err.message : err)
-    failed({ media: img.media, url: img.url, slide: img.slides?.[0] ?? null, reason })
+    const message = String(err && err.message ? err.message : err)
+    const aborted = stop.signal.aborted
+    failed({
+      media: img.media,
+      url: img.url,
+      slide: img.slides?.[0] ?? null,
+      slides: [...(img.slides || [])],
+      reason: aborted ? 'timeout' : message,
+      code: imageCode({ aborted, stage, message }),
+      status,
+      ms: performance.now() - t0,
+    })
     return null
   } finally {
     clearTimeout(timer)
@@ -482,8 +537,13 @@ function showImages () {
 //   any of them is near. A released picture is fetched again when its window comes back.
 // - One budget of MAX_DECK_IMAGE_BYTES caps the bytes held at once, and those arriving: it is spent
 //   as bytes arrive and given back as pictures are released, dropped or refused.
-// - A picture that failed is never tried again (a fetch error, a timeout, too large, undecodable),
-//   except one refused for the budget, which a later move tries again.
+// - A picture that failed for want of an answer (`imageCode` 'timeout' or 'network') or with a
+//   5xx status is tried again when a later move brings its window, at most MAX_IMAGE_RETRIES more
+//   times since it last loaded, then given up; never within the move it failed in, and always
+//   through the same queue and its `limit`, so a failing CDN is asked at most 1 +
+//   MAX_IMAGE_RETRIES times per picture in a row. One refused for the budget is tried again on
+//   every later move, as before. Any other failure (a 4xx status, too large, undecodable) is
+//   never tried again.
 // - At most `limit` fetches run at once, from one queue for the deck. A move puts the new window's
 //   pictures at the front, the slide on screen's first, and drops the old window's that haven't
 //   started (a later window may still ask for them); fetches already running finish, and their
@@ -502,6 +562,10 @@ async function openImages ({ deck, base, credentials, post, current, schedule, o
   const live = () => current() === deck
   const held = new Map() // media id → bytes the deck holds for it
   const failed = new Set() // media ids never tried again
+  const tries = new Map() // media id → failures that may be retried, so far
+  const retryAt = new Map() // media id → the first move that may fetch it again
+  let onScreen = null // the slide whose window was asked for last
+  let move = 0 // moves to another slide so far
   const fetching = new Set() // media ids being fetched
   const budget = { left: MAX_DECK_IMAGE_BYTES }
   // The slides whose pictures the deck keeps: those near the slide on screen.
@@ -525,10 +589,37 @@ async function openImages ({ deck, base, credentials, post, current, schedule, o
         throw new Error(String(err && err.message ? err.message : err))
       }
       held.set(media, buf.byteLength)
+      // A picture that loads starts afresh: a later failure gets every retry again.
+      tries.delete(media)
+      retryAt.delete(media)
     },
     failed: f => {
-      if (f.reason !== 'deck-budget') failed.add(f.media)
-      if (live()) post({ type: 'error', message: 'image-unavailable', url: f.url, slide: f.slide, reason: f.reason, fatal: false })
+      let retry = f.code === 'deck-budget'
+      if (retryable(f)) {
+        const n = (tries.get(f.media) || 0) + 1
+        tries.set(f.media, n)
+        retry = n <= MAX_IMAGE_RETRIES
+        // Not again in the move it failed in, however often that window is asked for.
+        if (retry) retryAt.set(f.media, move + 1)
+      }
+      if (!retry) failed.add(f.media)
+      if (!live()) return
+      post({
+        type: 'error',
+        message: 'image-unavailable',
+        url: f.url,
+        slide: f.slide,
+        reason: f.reason,
+        fatal: false,
+        code: f.code,
+        status: f.status,
+        file: fileOf(f.url),
+        media: f.media,
+        slides: f.slides,
+        onScreen,
+        retry,
+        ms: f.ms,
+      })
     },
     credentials,
     budget,
@@ -598,7 +689,7 @@ async function openImages ({ deck, base, credentials, post, current, schedule, o
     if (live()) {
       for (const s of slides) {
         for (const img of all) {
-          if (img.slides.includes(s) && !held.has(img.media) && !fetching.has(img.media) && !failed.has(img.media) && !picks.includes(img)) picks.push(img)
+          if (img.slides.includes(s) && !held.has(img.media) && !fetching.has(img.media) && !failed.has(img.media) && !((retryAt.get(img.media) ?? 0) > move) && !picks.includes(img)) picks.push(img)
         }
       }
     }
@@ -612,12 +703,15 @@ async function openImages ({ deck, base, credentials, post, current, schedule, o
   }
 
   const [start] = deck.position()
+  onScreen = start
   nearTo(start)
   await want([start], true)
   let at = null
   return slide => {
     if (slide === at) return Promise.resolve()
     at = slide
+    if (slide !== onScreen) move++
+    onScreen = slide
     nearTo(slide)
     if (live()) release()
     return want(windowSlides(order, slide, window))
@@ -665,7 +759,7 @@ function enqueue (task) {
 
 if (typeof module === 'object' && module.exports) {
   // Node, for the tests (worker.test.js).
-  module.exports = { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue, answerLinkAt, fetchImage, openImages, windowSlides, IMAGE_WINDOW, IMAGE_KEEP, MAX_DECK_IMAGE_BYTES, mediaUrl, readCapped, MAX_IMAGE_BYTES, MAX_IMAGE_FETCHES, IMAGE_TIMEOUT_MS }
+  module.exports = { familyKey, pickFace, loadFonts, MAX_FETCHES, startNotes, enqueue, answerLinkAt, fetchImage, openImages, windowSlides, IMAGE_WINDOW, IMAGE_KEEP, MAX_DECK_IMAGE_BYTES, mediaUrl, readCapped, MAX_IMAGE_BYTES, MAX_IMAGE_FETCHES, IMAGE_TIMEOUT_MS, MAX_IMAGE_RETRIES, imageCode, fileOf }
 } else {
   // An `open`'s download starts at once, alongside the module's; so does a notes download.
   self.onmessage = ({ data }) => {
